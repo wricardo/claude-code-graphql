@@ -1,0 +1,66 @@
+schema:
+  - graph/schema/*.graphqls
+
+exec:
+  filename: graph/generated.go
+  package: graph
+
+model:
+  filename: graph/models_gen.go
+  package: graph
+
+resolver:
+  layout: follow-schema
+  dir: graph
+  package: graph
+  filename_template: "{name}.resolvers.go"
+
+models:
+  Time:
+    model: github.com/99designs/gqlgen/graphql.Time
+  Session:
+    fields:
+      hooks:
+        resolver: true
+      hookCount:
+        resolver: true
+      toolUsage:
+        resolver: true
+      skillsUsed:
+        resolver: true
+      summary:
+        resolver: true
+      errorCount:
+        resolver: true
+      errors:
+        resolver: true
+      durationSeconds:
+        resolver: true
+  Hook:
+    fields:
+      parsedInput:
+        resolver: true
+  Stats:
+    fields:
+      topTools:
+        resolver: true
+      hooksByDay:
+        resolver: true
+      hooksByCwd:
+        resolver: true
+      toolErrorRates:
+        resolver: true
+      totalErrors:
+        resolver: true
+  Project:
+    fields:
+      sessions:
+        resolver: true
+      sessionCount:
+        resolver: true
+      transcriptCount:
+        resolver: true
+      skillsUsed:
+        resolver: true
+      toolUsage:
+        resolver: true

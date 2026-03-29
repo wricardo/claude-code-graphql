@@ -1,0 +1,298 @@
+scalar Time
+
+enum EventType {
+  SessionStart
+  PreToolUse
+  PostToolUse
+  Stop
+  Notification
+}
+
+enum SortDirection {
+  ASC
+  DESC
+}
+
+enum HookSortField {
+  recordedAt
+}
+
+input HooksSorting {
+  field: HookSortField!
+  direction: SortDirection!
+}
+
+input TimeRange {
+  from: Time
+  to: Time
+}
+
+input HooksFilter {
+  sessionId: String
+  eventType: EventType
+  toolName: String
+  recordedAt: TimeRange
+  cwd: String
+}
+
+"""
+A Claude Code session. One session = one invocation of Claude Code.
+"""
+type Session {
+  id: ID!
+  cwd: String
+  firstSeenAt: Time!
+  lastSeenAt: Time!
+  hookCount: Int!
+  hooks(filter: HooksFilter, sort: HooksSorting, limit: Int, offset: Int): [Hook!]!
+  """Tool usage breakdown for this session."""
+  toolUsage: [ToolStat!]!
+  """Skills invoked during this session."""
+  skillsUsed: [SkillUsage!]!
+  """AI-generated summary of what happened in this session. Null if not yet generated."""
+  summary: String
+  """Number of tool calls that resulted in errors."""
+  errorCount: Int!
+  """Tool errors detected in this session."""
+  errors: [ToolError!]!
+  """Duration in seconds from first to last hook."""
+  durationSeconds: Float
+}
+
+type BashInput {
+  command: String!
+  description: String
+  timeout: Int
+  runInBackground: Boolean
+}
+
+type ReadInput {
+  filePath: String!
+  limit: Int
+  offset: Int
+}
+
+type EditInput {
+  filePath: String!
+  oldString: String!
+  newString: String!
+  replaceAll: Boolean
+}
+
+type GrepInput {
+  pattern: String!
+  path: String
+  glob: String
+  type: String
+  outputMode: String
+}
+
+type WriteInput {
+  filePath: String!
+  content: String!
+}
+
+type GlobInput {
+  pattern: String!
+  path: String
+}
+
+type UnknownInput {
+  raw: String!
+}
+
+union ToolInputPayload = BashInput | ReadInput | EditInput | GrepInput | WriteInput | GlobInput | UnknownInput
+
+"""
+A raw hook event emitted by Claude Code.
+"""
+type Hook {
+  id: ID!
+  sessionId: String!
+  eventType: EventType!
+  toolName: String
+  toolInput: String
+  toolResponse: String
+  prompt: String
+  cwd: String
+  transcriptPath: String
+  recordedAt: Time!
+  parsedInput: ToolInputPayload
+}
+
+type ToolStat {
+  name: String!
+  count: Int!
+}
+
+type EventTypeStat {
+  eventType: String!
+  count: Int!
+}
+
+type DayStat {
+  date: String!
+  count: Int!
+}
+
+type CwdStat {
+  cwd: String!
+  hookCount: Int!
+  sessionCount: Int!
+}
+
+"""
+A tool error detected from a PostToolUse response.
+"""
+type ToolError {
+  id: ID!
+  sessionId: String!
+  toolName: String!
+  errorMessage: String!
+  """The command or input that caused the error."""
+  input: String
+  recordedAt: Time!
+}
+
+"""
+Tool error rate statistics.
+"""
+type ToolErrorRate {
+  toolName: String!
+  totalCalls: Int!
+  errorCount: Int!
+  errorRate: Float!
+}
+
+"""
+A search result hit.
+"""
+type SearchResult {
+  hook: Hook!
+  """Which field matched: prompt, toolInput, or toolResponse."""
+  matchField: String!
+  """Snippet of matching text with context."""
+  snippet: String!
+}
+
+type Stats {
+  totalSessions: Int!
+  totalHooks: Int!
+  topTools(limit: Int): [ToolStat!]!
+  hooksByEventType: [EventTypeStat!]!
+  hooksByDay(days: Int): [DayStat!]!
+  hooksByCwd(limit: Int): [CwdStat!]!
+  avgHooksPerSession: Float!
+  """Error rates per tool."""
+  toolErrorRates: [ToolErrorRate!]!
+  """Total errors across all sessions."""
+  totalErrors: Int!
+}
+
+type PageInfo {
+  hasNextPage: Boolean!
+  hasPreviousPage: Boolean!
+  startCursor: String
+  endCursor: String
+}
+
+type HookEdge {
+  node: Hook!
+  cursor: String!
+}
+
+type HookConnection {
+  edges: [HookEdge!]!
+  pageInfo: PageInfo!
+  totalCount: Int!
+}
+
+"""
+A Claude Code project, derived from ~/.claude/projects/.
+"""
+type Project {
+  """Encoded directory name under ~/.claude/projects/."""
+  encodedName: String!
+  """Decoded filesystem path."""
+  path: String!
+  """Number of transcript files found for this project."""
+  transcriptCount: Int!
+  """Sessions recorded in the hooks DB for this project."""
+  sessions(limit: Int, offset: Int): [Session!]!
+  """Session count from the hooks DB."""
+  sessionCount: Int!
+  """Skills used in this project (extracted from Skill tool hooks)."""
+  skillsUsed: [SkillUsage!]!
+  """Tool usage across all sessions in this project."""
+  toolUsage: [ToolStat!]!
+}
+
+"""
+A Claude Code skill from ~/.claude/skills/ (user-level) or project-level.
+"""
+type Skill {
+  name: String!
+  description: String!
+  """Directory name under skills/."""
+  dirName: String!
+}
+
+"""
+A record of a skill being used, with invocation count.
+"""
+type SkillUsage {
+  name: String!
+  count: Int!
+}
+
+"""
+A single message from a session transcript (.jsonl file).
+"""
+type TranscriptMessage {
+  type: String!
+  uuid: String
+  timestamp: String
+  role: String
+  content: String
+  """Full JSON of this transcript entry."""
+  raw: String!
+}
+
+type Query {
+  sessions(limit: Int, offset: Int): [Session!]!
+  session(id: ID!): Session
+  hooks(filter: HooksFilter, sort: HooksSorting, limit: Int, offset: Int): [Hook!]!
+  hooksPaged(sessionId: String, eventType: String, toolName: String, first: Int, after: String): HookConnection!
+  stats: Stats!
+
+  """List all known projects from ~/.claude/projects/."""
+  projects: [Project!]!
+  """Get a single project by its path (e.g. /Users/wricardo/go/src/...)."""
+  project(path: String!): Project
+
+  """List user-level skills from ~/.claude/skills/."""
+  userSkills: [Skill!]!
+
+  """Read the transcript for a session."""
+  transcript(sessionId: ID!, limit: Int, offset: Int): [TranscriptMessage!]!
+
+  """Full-text search across hook prompts, tool inputs, and tool responses."""
+  search(query: String!, sessionId: String, cwd: String, limit: Int): [SearchResult!]!
+}
+
+input RecordHookInput {
+  sessionId: String!
+  eventType: EventType!
+  toolName: String
+  toolInput: String
+  toolResponse: String
+  prompt: String
+  cwd: String
+  transcriptPath: String
+}
+
+type Mutation {
+  recordHook(input: RecordHookInput!): Hook!
+  """Generate an AI summary for a session. Uses venu to summarize hook activity."""
+  summarizeSession(sessionId: ID!): Session!
+}
