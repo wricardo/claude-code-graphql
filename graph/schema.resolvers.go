@@ -15,6 +15,23 @@ import (
 	"github.com/wricardo/claude-code-graphql/internal/store"
 )
 
+// ToolResponseFull is the resolver for the toolResponseFull field.
+// Reads the tool-results/<toolUseId>.txt file written by Claude Code for large outputs.
+func (r *hookResolver) ToolResponseFull(ctx context.Context, obj *Hook) (*string, error) {
+	if obj.ToolUseID == nil || *obj.ToolUseID == "" {
+		return nil, nil
+	}
+	encodedProject, found := claude.FindProjectForSession(r.ClaudeDir, obj.SessionID)
+	if !found {
+		return nil, nil
+	}
+	content, err := claude.ReadToolResultFile(r.ClaudeDir, encodedProject, obj.SessionID, *obj.ToolUseID)
+	if err != nil || content == "" {
+		return nil, err
+	}
+	return &content, nil
+}
+
 // ParsedInput is the resolver for the parsedInput field.
 func (r *hookResolver) ParsedInput(ctx context.Context, obj *Hook) (ToolInputPayload, error) {
 	if obj.ToolInput == nil || *obj.ToolInput == "" {
@@ -122,12 +139,43 @@ func (r *hookResolver) ParsedInput(ctx context.Context, obj *Hook) (ToolInputPay
 	}
 }
 
+// LastAssistantMessage is the resolver for the lastAssistantMessage field.
+// Parses last_assistant_message from tool_input JSON, present on Stop/SubagentStop events.
+func (r *hookResolver) LastAssistantMessage(ctx context.Context, obj *Hook) (*string, error) {
+	if obj.ToolInput == nil || *obj.ToolInput == "" {
+		return nil, nil
+	}
+	var v struct {
+		LastAssistantMessage string `json:"last_assistant_message"`
+	}
+	if err := json.Unmarshal([]byte(*obj.ToolInput), &v); err != nil || v.LastAssistantMessage == "" {
+		return nil, nil
+	}
+	return &v.LastAssistantMessage, nil
+}
+
+// StopHookActive is the resolver for the stopHookActive field.
+// Parses stop_hook_active from tool_input JSON, present on Stop/SubagentStop events.
+func (r *hookResolver) StopHookActive(ctx context.Context, obj *Hook) (*bool, error) {
+	if obj.ToolInput == nil || *obj.ToolInput == "" {
+		return nil, nil
+	}
+	var v struct {
+		StopHookActive *bool `json:"stop_hook_active"`
+	}
+	if err := json.Unmarshal([]byte(*obj.ToolInput), &v); err != nil || v.StopHookActive == nil {
+		return nil, nil
+	}
+	return v.StopHookActive, nil
+}
+
 // RecordHook is the resolver for the recordHook field.
 func (r *mutationResolver) RecordHook(ctx context.Context, input RecordHookInput) (*Hook, error) {
 	h, err := r.Store.RecordHook(store.RecordHookInput{
 		SessionID:      input.SessionID,
 		EventType:      input.EventType.String(),
 		ToolName:       derefStr(input.ToolName),
+		ToolUseID:      derefStr(input.ToolUseID),
 		ToolInput:      derefStr(input.ToolInput),
 		ToolResponse:   derefStr(input.ToolResponse),
 		Prompt:         derefStr(input.Prompt),
@@ -399,45 +447,7 @@ func (r *queryResolver) Transcript(ctx context.Context, sessionID string, limit 
 	if err != nil {
 		return nil, err
 	}
-
-	l := derefInt(limit, 100)
-	o := derefInt(offset, 0)
-	if o > len(msgs) {
-		return nil, nil
-	}
-	msgs = msgs[o:]
-	if l < len(msgs) {
-		msgs = msgs[:l]
-	}
-
-	out := make([]*TranscriptMessage, len(msgs))
-	for i, m := range msgs {
-		tm := &TranscriptMessage{
-			Type: m.Type,
-			Raw:  string(m.Raw),
-		}
-		if m.UUID != "" {
-			tm.UUID = &m.UUID
-		}
-		if m.Timestamp != "" {
-			tm.Timestamp = &m.Timestamp
-		}
-		if m.Message.Role != "" {
-			tm.Role = &m.Message.Role
-		}
-		if m.Message.Content != nil {
-			switch v := m.Message.Content.(type) {
-			case string:
-				tm.Content = &v
-			default:
-				b, _ := json.Marshal(v)
-				s := string(b)
-				tm.Content = &s
-			}
-		}
-		out[i] = tm
-	}
-	return out, nil
+	return claudeMsgsToGQL(msgs, derefInt(limit, 100), derefInt(offset, 0)), nil
 }
 
 // Search is the resolver for the search field.
@@ -567,6 +577,95 @@ func (r *sessionResolver) DurationSeconds(ctx context.Context, obj *Session) (*f
 	return r.Store.GetSessionDuration(obj.ID)
 }
 
+// GitBranch is the resolver for the gitBranch field.
+// Reads the gitBranch field from the first user or assistant message in the transcript.
+func (r *sessionResolver) GitBranch(ctx context.Context, obj *Session) (*string, error) {
+	msgs, err := r.loadSessionTranscript(obj.ID)
+	if err != nil || len(msgs) == 0 {
+		return nil, err
+	}
+	for _, m := range msgs {
+		if m.GitBranch != "" {
+			return &m.GitBranch, nil
+		}
+	}
+	return nil, nil
+}
+
+// Model is the resolver for the model field.
+// Returns the Claude model string from the first assistant message that reports one.
+func (r *sessionResolver) Model(ctx context.Context, obj *Session) (*string, error) {
+	msgs, err := r.loadSessionTranscript(obj.ID)
+	if err != nil {
+		return nil, err
+	}
+	for _, m := range msgs {
+		if m.Message.Model != "" {
+			return &m.Message.Model, nil
+		}
+	}
+	return nil, nil
+}
+
+// TokenUsage is the resolver for the tokenUsage field.
+// Sums token counts from all assistant messages in the transcript.
+func (r *sessionResolver) TokenUsage(ctx context.Context, obj *Session) (*TokenUsage, error) {
+	msgs, err := r.loadSessionTranscript(obj.ID)
+	if err != nil {
+		return nil, err
+	}
+	var total TokenUsage
+	hasData := false
+	for _, m := range msgs {
+		u := m.Message.Usage
+		if u.InputTokens == 0 && u.OutputTokens == 0 {
+			continue
+		}
+		hasData = true
+		total.InputTokens += u.InputTokens
+		total.OutputTokens += u.OutputTokens
+		total.CacheReadTokens += u.CacheReadInputTokens
+		total.CacheCreationTokens += u.CacheCreationInputTokens
+	}
+	if !hasData {
+		return nil, nil
+	}
+	return &total, nil
+}
+
+// Transcript is the resolver for the transcript field on Session.
+func (r *sessionResolver) Transcript(ctx context.Context, obj *Session, limit *int, offset *int) ([]*TranscriptMessage, error) {
+	msgs, err := r.loadSessionTranscript(obj.ID)
+	if err != nil {
+		return nil, err
+	}
+	return claudeMsgsToGQL(msgs, derefInt(limit, 100), derefInt(offset, 0)), nil
+}
+
+// Subagents is the resolver for the subagents field.
+func (r *sessionResolver) Subagents(ctx context.Context, obj *Session) ([]*Subagent, error) {
+	encodedProject, found := claude.FindProjectForSession(r.ClaudeDir, obj.ID)
+	if !found {
+		return nil, nil
+	}
+	subs, err := claude.ListSubagents(r.ClaudeDir, encodedProject, obj.ID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]*Subagent, len(subs))
+	for i, s := range subs {
+		out[i] = &Subagent{
+			ID:          s.ID,
+			AgentType:   s.AgentType,
+			Description: s.Description,
+		}
+		// Store transcript path in the subagent struct for the transcript resolver.
+		// We encode it in the ID field with a separator so the subagentResolver can retrieve it.
+		out[i].ID = s.ID + "|" + s.TranscriptPath
+	}
+	return out, nil
+}
+
 // TopTools is the resolver for the topTools field.
 func (r *statsResolver) TopTools(ctx context.Context, obj *Stats, limit *int) ([]*ToolStat, error) {
 	rows, err := r.Store.GetTopTools(derefInt(limit, 10))
@@ -633,6 +732,101 @@ func (r *statsResolver) TotalErrors(ctx context.Context, obj *Stats) (int, error
 	return r.Store.GetTotalErrors()
 }
 
+// Transcript is the resolver for the transcript field on Subagent.
+// The subagent ID is encoded as "<agentId>|<transcriptPath>" by the Subagents resolver.
+func (r *subagentResolver) Transcript(ctx context.Context, obj *Subagent, limit *int, offset *int) ([]*TranscriptMessage, error) {
+	// Extract the transcript path from the encoded ID.
+	idx := 0
+	for i, c := range obj.ID {
+		if c == '|' {
+			idx = i
+			break
+		}
+	}
+	if idx == 0 {
+		return nil, nil
+	}
+	transcriptPath := obj.ID[idx+1:]
+	msgs, err := claude.ReadSubagentTranscript(transcriptPath)
+	if err != nil {
+		return nil, err
+	}
+	return claudeMsgsToGQL(msgs, derefInt(limit, 100), derefInt(offset, 0)), nil
+}
+
+// ContentBlocks is the resolver for the contentBlocks field.
+func (r *transcriptMessageResolver) ContentBlocks(ctx context.Context, obj *TranscriptMessage) ([]ContentBlock, error) {
+	var raw struct {
+		Message struct {
+			Content json.RawMessage `json:"content"`
+		} `json:"message"`
+	}
+	if err := json.Unmarshal([]byte(obj.Raw), &raw); err != nil || raw.Message.Content == nil {
+		return nil, nil
+	}
+
+	// content may be a plain string (simple user prompt)
+	var strContent string
+	if err := json.Unmarshal(raw.Message.Content, &strContent); err == nil {
+		if strContent != "" {
+			return []ContentBlock{&TextBlock{Text: strContent}}, nil
+		}
+		return nil, nil
+	}
+
+	// content is an array of typed blocks
+	var blocks []json.RawMessage
+	if err := json.Unmarshal(raw.Message.Content, &blocks); err != nil {
+		return nil, nil
+	}
+
+	var out []ContentBlock
+	for _, b := range blocks {
+		var typed struct {
+			Type string `json:"type"`
+		}
+		if err := json.Unmarshal(b, &typed); err != nil {
+			continue
+		}
+		switch typed.Type {
+		case "text":
+			var v struct {
+				Text string `json:"text"`
+			}
+			json.Unmarshal(b, &v)
+			out = append(out, &TextBlock{Text: v.Text})
+		case "tool_use":
+			var v struct {
+				ID    string          `json:"id"`
+				Name  string          `json:"name"`
+				Input json.RawMessage `json:"input"`
+			}
+			json.Unmarshal(b, &v)
+			out = append(out, &ToolUseBlock{ID: v.ID, Name: v.Name, InputJSON: string(v.Input)})
+		case "tool_result":
+			var v struct {
+				ToolUseID string          `json:"tool_use_id"`
+				Content   json.RawMessage `json:"content"`
+				IsError   bool            `json:"is_error"`
+			}
+			json.Unmarshal(b, &v)
+			content := string(v.Content)
+			var s string
+			if err := json.Unmarshal(v.Content, &s); err == nil {
+				content = s
+			}
+			out = append(out, &ToolResultBlock{ToolUseID: v.ToolUseID, Content: content, IsError: v.IsError})
+		case "thinking":
+			var v struct {
+				Thinking string `json:"thinking"`
+			}
+			json.Unmarshal(b, &v)
+			out = append(out, &ThinkingBlock{Thinking: &v.Thinking})
+		}
+	}
+	return out, nil
+}
+
 // Hook returns HookResolver implementation.
 func (r *Resolver) Hook() HookResolver { return &hookResolver{r} }
 
@@ -651,9 +845,20 @@ func (r *Resolver) Session() SessionResolver { return &sessionResolver{r} }
 // Stats returns StatsResolver implementation.
 func (r *Resolver) Stats() StatsResolver { return &statsResolver{r} }
 
+// Subagent returns SubagentResolver implementation.
+func (r *Resolver) Subagent() SubagentResolver { return &subagentResolver{r} }
+
+// TranscriptMessage returns TranscriptMessageResolver implementation.
+func (r *Resolver) TranscriptMessage() TranscriptMessageResolver {
+	return &transcriptMessageResolver{r}
+}
+
 type hookResolver struct{ *Resolver }
 type mutationResolver struct{ *Resolver }
 type projectResolver struct{ *Resolver }
 type queryResolver struct{ *Resolver }
 type sessionResolver struct{ *Resolver }
 type statsResolver struct{ *Resolver }
+type subagentResolver struct{ *Resolver }
+type transcriptMessageResolver struct{ *Resolver }
+

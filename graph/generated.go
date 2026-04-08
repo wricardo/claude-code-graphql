@@ -34,6 +34,8 @@ type ResolverRoot interface {
 	Query() QueryResolver
 	Session() SessionResolver
 	Stats() StatsResolver
+	Subagent() SubagentResolver
+	TranscriptMessage() TranscriptMessageResolver
 }
 
 type DirectiveRoot struct {
@@ -84,17 +86,26 @@ type ComplexityRoot struct {
 	}
 
 	Hook struct {
-		Cwd            func(childComplexity int) int
-		EventType      func(childComplexity int) int
-		ID             func(childComplexity int) int
-		ParsedInput    func(childComplexity int) int
-		Prompt         func(childComplexity int) int
-		RecordedAt     func(childComplexity int) int
-		SessionID      func(childComplexity int) int
-		ToolInput      func(childComplexity int) int
-		ToolName       func(childComplexity int) int
-		ToolResponse   func(childComplexity int) int
-		TranscriptPath func(childComplexity int) int
+		AgentType            func(childComplexity int) int
+		Cwd                  func(childComplexity int) int
+		Error                func(childComplexity int) int
+		EventType            func(childComplexity int) int
+		ID                   func(childComplexity int) int
+		LastAssistantMessage func(childComplexity int) int
+		ParsedInput          func(childComplexity int) int
+		PermissionMode       func(childComplexity int) int
+		Prompt               func(childComplexity int) int
+		Reason               func(childComplexity int) int
+		RecordedAt           func(childComplexity int) int
+		SessionID            func(childComplexity int) int
+		Source               func(childComplexity int) int
+		StopHookActive       func(childComplexity int) int
+		ToolInput            func(childComplexity int) int
+		ToolName             func(childComplexity int) int
+		ToolResponse         func(childComplexity int) int
+		ToolResponseFull     func(childComplexity int) int
+		ToolUseID            func(childComplexity int) int
+		TranscriptPath       func(childComplexity int) int
 	}
 
 	HookConnection struct {
@@ -161,13 +172,18 @@ type ComplexityRoot struct {
 		ErrorCount      func(childComplexity int) int
 		Errors          func(childComplexity int) int
 		FirstSeenAt     func(childComplexity int) int
+		GitBranch       func(childComplexity int) int
 		HookCount       func(childComplexity int) int
 		Hooks           func(childComplexity int, filter *HooksFilter, sort *HooksSorting, limit *int, offset *int) int
 		ID              func(childComplexity int) int
 		LastSeenAt      func(childComplexity int) int
+		Model           func(childComplexity int) int
 		SkillsUsed      func(childComplexity int) int
+		Subagents       func(childComplexity int) int
 		Summary         func(childComplexity int) int
+		TokenUsage      func(childComplexity int) int
 		ToolUsage       func(childComplexity int) int
+		Transcript      func(childComplexity int, limit *int, offset *int) int
 	}
 
 	Skill struct {
@@ -193,6 +209,28 @@ type ComplexityRoot struct {
 		TotalSessions      func(childComplexity int) int
 	}
 
+	Subagent struct {
+		AgentType   func(childComplexity int) int
+		Description func(childComplexity int) int
+		ID          func(childComplexity int) int
+		Transcript  func(childComplexity int, limit *int, offset *int) int
+	}
+
+	TextBlock struct {
+		Text func(childComplexity int) int
+	}
+
+	ThinkingBlock struct {
+		Thinking func(childComplexity int) int
+	}
+
+	TokenUsage struct {
+		CacheCreationTokens func(childComplexity int) int
+		CacheReadTokens     func(childComplexity int) int
+		InputTokens         func(childComplexity int) int
+		OutputTokens        func(childComplexity int) int
+	}
+
 	ToolError struct {
 		ErrorMessage func(childComplexity int) int
 		ID           func(childComplexity int) int
@@ -209,18 +247,33 @@ type ComplexityRoot struct {
 		TotalCalls func(childComplexity int) int
 	}
 
+	ToolResultBlock struct {
+		Content   func(childComplexity int) int
+		IsError   func(childComplexity int) int
+		ToolUseID func(childComplexity int) int
+	}
+
 	ToolStat struct {
 		Count func(childComplexity int) int
 		Name  func(childComplexity int) int
 	}
 
+	ToolUseBlock struct {
+		ID        func(childComplexity int) int
+		InputJSON func(childComplexity int) int
+		Name      func(childComplexity int) int
+	}
+
 	TranscriptMessage struct {
-		Content   func(childComplexity int) int
-		Raw       func(childComplexity int) int
-		Role      func(childComplexity int) int
-		Timestamp func(childComplexity int) int
-		Type      func(childComplexity int) int
-		UUID      func(childComplexity int) int
+		Content       func(childComplexity int) int
+		ContentBlocks func(childComplexity int) int
+		IsSidechain   func(childComplexity int) int
+		ParentUUID    func(childComplexity int) int
+		Raw           func(childComplexity int) int
+		Role          func(childComplexity int) int
+		Timestamp     func(childComplexity int) int
+		Type          func(childComplexity int) int
+		UUID          func(childComplexity int) int
 	}
 
 	UnknownInput struct {
@@ -234,7 +287,12 @@ type ComplexityRoot struct {
 }
 
 type HookResolver interface {
+	ToolResponseFull(ctx context.Context, obj *Hook) (*string, error)
+
 	ParsedInput(ctx context.Context, obj *Hook) (ToolInputPayload, error)
+
+	LastAssistantMessage(ctx context.Context, obj *Hook) (*string, error)
+	StopHookActive(ctx context.Context, obj *Hook) (*bool, error)
 }
 type MutationResolver interface {
 	RecordHook(ctx context.Context, input RecordHookInput) (*Hook, error)
@@ -268,6 +326,11 @@ type SessionResolver interface {
 	ErrorCount(ctx context.Context, obj *Session) (int, error)
 	Errors(ctx context.Context, obj *Session) ([]*ToolError, error)
 	DurationSeconds(ctx context.Context, obj *Session) (*float64, error)
+	GitBranch(ctx context.Context, obj *Session) (*string, error)
+	Model(ctx context.Context, obj *Session) (*string, error)
+	TokenUsage(ctx context.Context, obj *Session) (*TokenUsage, error)
+	Transcript(ctx context.Context, obj *Session, limit *int, offset *int) ([]*TranscriptMessage, error)
+	Subagents(ctx context.Context, obj *Session) ([]*Subagent, error)
 }
 type StatsResolver interface {
 	TopTools(ctx context.Context, obj *Stats, limit *int) ([]*ToolStat, error)
@@ -277,6 +340,12 @@ type StatsResolver interface {
 
 	ToolErrorRates(ctx context.Context, obj *Stats) ([]*ToolErrorRate, error)
 	TotalErrors(ctx context.Context, obj *Stats) (int, error)
+}
+type SubagentResolver interface {
+	Transcript(ctx context.Context, obj *Subagent, limit *int, offset *int) ([]*TranscriptMessage, error)
+}
+type TranscriptMessageResolver interface {
+	ContentBlocks(ctx context.Context, obj *TranscriptMessage) ([]ContentBlock, error)
 }
 
 type executableSchema graphql.ExecutableSchemaState[ResolverRoot, DirectiveRoot, ComplexityRoot]
@@ -432,12 +501,24 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 
 		return e.ComplexityRoot.GrepInput.Type(childComplexity), true
 
+	case "Hook.agentType":
+		if e.ComplexityRoot.Hook.AgentType == nil {
+			break
+		}
+
+		return e.ComplexityRoot.Hook.AgentType(childComplexity), true
 	case "Hook.cwd":
 		if e.ComplexityRoot.Hook.Cwd == nil {
 			break
 		}
 
 		return e.ComplexityRoot.Hook.Cwd(childComplexity), true
+	case "Hook.error":
+		if e.ComplexityRoot.Hook.Error == nil {
+			break
+		}
+
+		return e.ComplexityRoot.Hook.Error(childComplexity), true
 	case "Hook.eventType":
 		if e.ComplexityRoot.Hook.EventType == nil {
 			break
@@ -450,18 +531,36 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.ComplexityRoot.Hook.ID(childComplexity), true
+	case "Hook.lastAssistantMessage":
+		if e.ComplexityRoot.Hook.LastAssistantMessage == nil {
+			break
+		}
+
+		return e.ComplexityRoot.Hook.LastAssistantMessage(childComplexity), true
 	case "Hook.parsedInput":
 		if e.ComplexityRoot.Hook.ParsedInput == nil {
 			break
 		}
 
 		return e.ComplexityRoot.Hook.ParsedInput(childComplexity), true
+	case "Hook.permissionMode":
+		if e.ComplexityRoot.Hook.PermissionMode == nil {
+			break
+		}
+
+		return e.ComplexityRoot.Hook.PermissionMode(childComplexity), true
 	case "Hook.prompt":
 		if e.ComplexityRoot.Hook.Prompt == nil {
 			break
 		}
 
 		return e.ComplexityRoot.Hook.Prompt(childComplexity), true
+	case "Hook.reason":
+		if e.ComplexityRoot.Hook.Reason == nil {
+			break
+		}
+
+		return e.ComplexityRoot.Hook.Reason(childComplexity), true
 	case "Hook.recordedAt":
 		if e.ComplexityRoot.Hook.RecordedAt == nil {
 			break
@@ -474,6 +573,18 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.ComplexityRoot.Hook.SessionID(childComplexity), true
+	case "Hook.source":
+		if e.ComplexityRoot.Hook.Source == nil {
+			break
+		}
+
+		return e.ComplexityRoot.Hook.Source(childComplexity), true
+	case "Hook.stopHookActive":
+		if e.ComplexityRoot.Hook.StopHookActive == nil {
+			break
+		}
+
+		return e.ComplexityRoot.Hook.StopHookActive(childComplexity), true
 	case "Hook.toolInput":
 		if e.ComplexityRoot.Hook.ToolInput == nil {
 			break
@@ -492,6 +603,18 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.ComplexityRoot.Hook.ToolResponse(childComplexity), true
+	case "Hook.toolResponseFull":
+		if e.ComplexityRoot.Hook.ToolResponseFull == nil {
+			break
+		}
+
+		return e.ComplexityRoot.Hook.ToolResponseFull(childComplexity), true
+	case "Hook.toolUseId":
+		if e.ComplexityRoot.Hook.ToolUseID == nil {
+			break
+		}
+
+		return e.ComplexityRoot.Hook.ToolUseID(childComplexity), true
 	case "Hook.transcriptPath":
 		if e.ComplexityRoot.Hook.TranscriptPath == nil {
 			break
@@ -792,6 +915,12 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.ComplexityRoot.Session.FirstSeenAt(childComplexity), true
+	case "Session.gitBranch":
+		if e.ComplexityRoot.Session.GitBranch == nil {
+			break
+		}
+
+		return e.ComplexityRoot.Session.GitBranch(childComplexity), true
 	case "Session.hookCount":
 		if e.ComplexityRoot.Session.HookCount == nil {
 			break
@@ -821,24 +950,53 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.ComplexityRoot.Session.LastSeenAt(childComplexity), true
+	case "Session.model":
+		if e.ComplexityRoot.Session.Model == nil {
+			break
+		}
+
+		return e.ComplexityRoot.Session.Model(childComplexity), true
 	case "Session.skillsUsed":
 		if e.ComplexityRoot.Session.SkillsUsed == nil {
 			break
 		}
 
 		return e.ComplexityRoot.Session.SkillsUsed(childComplexity), true
+	case "Session.subagents":
+		if e.ComplexityRoot.Session.Subagents == nil {
+			break
+		}
+
+		return e.ComplexityRoot.Session.Subagents(childComplexity), true
 	case "Session.summary":
 		if e.ComplexityRoot.Session.Summary == nil {
 			break
 		}
 
 		return e.ComplexityRoot.Session.Summary(childComplexity), true
+	case "Session.tokenUsage":
+		if e.ComplexityRoot.Session.TokenUsage == nil {
+			break
+		}
+
+		return e.ComplexityRoot.Session.TokenUsage(childComplexity), true
 	case "Session.toolUsage":
 		if e.ComplexityRoot.Session.ToolUsage == nil {
 			break
 		}
 
 		return e.ComplexityRoot.Session.ToolUsage(childComplexity), true
+	case "Session.transcript":
+		if e.ComplexityRoot.Session.Transcript == nil {
+			break
+		}
+
+		args, err := ec.field_Session_transcript_args(ctx, rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.ComplexityRoot.Session.Transcript(childComplexity, args["limit"].(*int), args["offset"].(*int)), true
 
 	case "Skill.description":
 		if e.ComplexityRoot.Skill.Description == nil {
@@ -942,6 +1100,75 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 
 		return e.ComplexityRoot.Stats.TotalSessions(childComplexity), true
 
+	case "Subagent.agentType":
+		if e.ComplexityRoot.Subagent.AgentType == nil {
+			break
+		}
+
+		return e.ComplexityRoot.Subagent.AgentType(childComplexity), true
+	case "Subagent.description":
+		if e.ComplexityRoot.Subagent.Description == nil {
+			break
+		}
+
+		return e.ComplexityRoot.Subagent.Description(childComplexity), true
+	case "Subagent.id":
+		if e.ComplexityRoot.Subagent.ID == nil {
+			break
+		}
+
+		return e.ComplexityRoot.Subagent.ID(childComplexity), true
+	case "Subagent.transcript":
+		if e.ComplexityRoot.Subagent.Transcript == nil {
+			break
+		}
+
+		args, err := ec.field_Subagent_transcript_args(ctx, rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.ComplexityRoot.Subagent.Transcript(childComplexity, args["limit"].(*int), args["offset"].(*int)), true
+
+	case "TextBlock.text":
+		if e.ComplexityRoot.TextBlock.Text == nil {
+			break
+		}
+
+		return e.ComplexityRoot.TextBlock.Text(childComplexity), true
+
+	case "ThinkingBlock.thinking":
+		if e.ComplexityRoot.ThinkingBlock.Thinking == nil {
+			break
+		}
+
+		return e.ComplexityRoot.ThinkingBlock.Thinking(childComplexity), true
+
+	case "TokenUsage.cacheCreationTokens":
+		if e.ComplexityRoot.TokenUsage.CacheCreationTokens == nil {
+			break
+		}
+
+		return e.ComplexityRoot.TokenUsage.CacheCreationTokens(childComplexity), true
+	case "TokenUsage.cacheReadTokens":
+		if e.ComplexityRoot.TokenUsage.CacheReadTokens == nil {
+			break
+		}
+
+		return e.ComplexityRoot.TokenUsage.CacheReadTokens(childComplexity), true
+	case "TokenUsage.inputTokens":
+		if e.ComplexityRoot.TokenUsage.InputTokens == nil {
+			break
+		}
+
+		return e.ComplexityRoot.TokenUsage.InputTokens(childComplexity), true
+	case "TokenUsage.outputTokens":
+		if e.ComplexityRoot.TokenUsage.OutputTokens == nil {
+			break
+		}
+
+		return e.ComplexityRoot.TokenUsage.OutputTokens(childComplexity), true
+
 	case "ToolError.errorMessage":
 		if e.ComplexityRoot.ToolError.ErrorMessage == nil {
 			break
@@ -1004,6 +1231,25 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 
 		return e.ComplexityRoot.ToolErrorRate.TotalCalls(childComplexity), true
 
+	case "ToolResultBlock.content":
+		if e.ComplexityRoot.ToolResultBlock.Content == nil {
+			break
+		}
+
+		return e.ComplexityRoot.ToolResultBlock.Content(childComplexity), true
+	case "ToolResultBlock.isError":
+		if e.ComplexityRoot.ToolResultBlock.IsError == nil {
+			break
+		}
+
+		return e.ComplexityRoot.ToolResultBlock.IsError(childComplexity), true
+	case "ToolResultBlock.toolUseId":
+		if e.ComplexityRoot.ToolResultBlock.ToolUseID == nil {
+			break
+		}
+
+		return e.ComplexityRoot.ToolResultBlock.ToolUseID(childComplexity), true
+
 	case "ToolStat.count":
 		if e.ComplexityRoot.ToolStat.Count == nil {
 			break
@@ -1017,12 +1263,49 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 
 		return e.ComplexityRoot.ToolStat.Name(childComplexity), true
 
+	case "ToolUseBlock.id":
+		if e.ComplexityRoot.ToolUseBlock.ID == nil {
+			break
+		}
+
+		return e.ComplexityRoot.ToolUseBlock.ID(childComplexity), true
+	case "ToolUseBlock.inputJson":
+		if e.ComplexityRoot.ToolUseBlock.InputJSON == nil {
+			break
+		}
+
+		return e.ComplexityRoot.ToolUseBlock.InputJSON(childComplexity), true
+	case "ToolUseBlock.name":
+		if e.ComplexityRoot.ToolUseBlock.Name == nil {
+			break
+		}
+
+		return e.ComplexityRoot.ToolUseBlock.Name(childComplexity), true
+
 	case "TranscriptMessage.content":
 		if e.ComplexityRoot.TranscriptMessage.Content == nil {
 			break
 		}
 
 		return e.ComplexityRoot.TranscriptMessage.Content(childComplexity), true
+	case "TranscriptMessage.contentBlocks":
+		if e.ComplexityRoot.TranscriptMessage.ContentBlocks == nil {
+			break
+		}
+
+		return e.ComplexityRoot.TranscriptMessage.ContentBlocks(childComplexity), true
+	case "TranscriptMessage.isSidechain":
+		if e.ComplexityRoot.TranscriptMessage.IsSidechain == nil {
+			break
+		}
+
+		return e.ComplexityRoot.TranscriptMessage.IsSidechain(childComplexity), true
+	case "TranscriptMessage.parentUuid":
+		if e.ComplexityRoot.TranscriptMessage.ParentUUID == nil {
+			break
+		}
+
+		return e.ComplexityRoot.TranscriptMessage.ParentUUID(childComplexity), true
 	case "TranscriptMessage.raw":
 		if e.ComplexityRoot.TranscriptMessage.Raw == nil {
 			break
@@ -1397,6 +1680,22 @@ func (ec *executionContext) field_Session_hooks_args(ctx context.Context, rawArg
 	return args, nil
 }
 
+func (ec *executionContext) field_Session_transcript_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "limit", ec.unmarshalOInt2ᚖint)
+	if err != nil {
+		return nil, err
+	}
+	args["limit"] = arg0
+	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "offset", ec.unmarshalOInt2ᚖint)
+	if err != nil {
+		return nil, err
+	}
+	args["offset"] = arg1
+	return args, nil
+}
+
 func (ec *executionContext) field_Stats_hooksByCwd_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
 	var err error
 	args := map[string]any{}
@@ -1427,6 +1726,22 @@ func (ec *executionContext) field_Stats_topTools_args(ctx context.Context, rawAr
 		return nil, err
 	}
 	args["limit"] = arg0
+	return args, nil
+}
+
+func (ec *executionContext) field_Subagent_transcript_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "limit", ec.unmarshalOInt2ᚖint)
+	if err != nil {
+		return nil, err
+	}
+	args["limit"] = arg0
+	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "offset", ec.unmarshalOInt2ᚖint)
+	if err != nil {
+		return nil, err
+	}
+	args["offset"] = arg1
 	return args, nil
 }
 
@@ -2294,6 +2609,64 @@ func (ec *executionContext) fieldContext_Hook_toolResponse(_ context.Context, fi
 	return fc, nil
 }
 
+func (ec *executionContext) _Hook_toolResponseFull(ctx context.Context, field graphql.CollectedField, obj *Hook) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Hook_toolResponseFull,
+		func(ctx context.Context) (any, error) {
+			return ec.Resolvers.Hook().ToolResponseFull(ctx, obj)
+		},
+		nil,
+		ec.marshalOString2ᚖstring,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_Hook_toolResponseFull(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Hook",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Hook_toolUseId(ctx context.Context, field graphql.CollectedField, obj *Hook) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Hook_toolUseId,
+		func(ctx context.Context) (any, error) {
+			return obj.ToolUseID, nil
+		},
+		nil,
+		ec.marshalOString2ᚖstring,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_Hook_toolUseId(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Hook",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
 func (ec *executionContext) _Hook_prompt(ctx context.Context, field graphql.CollectedField, obj *Hook) (ret graphql.Marshaler) {
 	return graphql.ResolveField(
 		ctx,
@@ -2439,6 +2812,209 @@ func (ec *executionContext) fieldContext_Hook_parsedInput(_ context.Context, fie
 	return fc, nil
 }
 
+func (ec *executionContext) _Hook_permissionMode(ctx context.Context, field graphql.CollectedField, obj *Hook) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Hook_permissionMode,
+		func(ctx context.Context) (any, error) {
+			return obj.PermissionMode, nil
+		},
+		nil,
+		ec.marshalOString2ᚖstring,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_Hook_permissionMode(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Hook",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Hook_agentType(ctx context.Context, field graphql.CollectedField, obj *Hook) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Hook_agentType,
+		func(ctx context.Context) (any, error) {
+			return obj.AgentType, nil
+		},
+		nil,
+		ec.marshalOString2ᚖstring,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_Hook_agentType(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Hook",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Hook_error(ctx context.Context, field graphql.CollectedField, obj *Hook) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Hook_error,
+		func(ctx context.Context) (any, error) {
+			return obj.Error, nil
+		},
+		nil,
+		ec.marshalOString2ᚖstring,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_Hook_error(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Hook",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Hook_reason(ctx context.Context, field graphql.CollectedField, obj *Hook) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Hook_reason,
+		func(ctx context.Context) (any, error) {
+			return obj.Reason, nil
+		},
+		nil,
+		ec.marshalOString2ᚖstring,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_Hook_reason(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Hook",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Hook_source(ctx context.Context, field graphql.CollectedField, obj *Hook) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Hook_source,
+		func(ctx context.Context) (any, error) {
+			return obj.Source, nil
+		},
+		nil,
+		ec.marshalOString2ᚖstring,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_Hook_source(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Hook",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Hook_lastAssistantMessage(ctx context.Context, field graphql.CollectedField, obj *Hook) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Hook_lastAssistantMessage,
+		func(ctx context.Context) (any, error) {
+			return ec.Resolvers.Hook().LastAssistantMessage(ctx, obj)
+		},
+		nil,
+		ec.marshalOString2ᚖstring,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_Hook_lastAssistantMessage(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Hook",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Hook_stopHookActive(ctx context.Context, field graphql.CollectedField, obj *Hook) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Hook_stopHookActive,
+		func(ctx context.Context) (any, error) {
+			return ec.Resolvers.Hook().StopHookActive(ctx, obj)
+		},
+		nil,
+		ec.marshalOBoolean2ᚖbool,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_Hook_stopHookActive(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Hook",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Boolean does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
 func (ec *executionContext) _HookConnection_edges(ctx context.Context, field graphql.CollectedField, obj *HookConnection) (ret graphql.Marshaler) {
 	return graphql.ResolveField(
 		ctx,
@@ -2578,6 +3154,10 @@ func (ec *executionContext) fieldContext_HookEdge_node(_ context.Context, field 
 				return ec.fieldContext_Hook_toolInput(ctx, field)
 			case "toolResponse":
 				return ec.fieldContext_Hook_toolResponse(ctx, field)
+			case "toolResponseFull":
+				return ec.fieldContext_Hook_toolResponseFull(ctx, field)
+			case "toolUseId":
+				return ec.fieldContext_Hook_toolUseId(ctx, field)
 			case "prompt":
 				return ec.fieldContext_Hook_prompt(ctx, field)
 			case "cwd":
@@ -2588,6 +3168,20 @@ func (ec *executionContext) fieldContext_HookEdge_node(_ context.Context, field 
 				return ec.fieldContext_Hook_recordedAt(ctx, field)
 			case "parsedInput":
 				return ec.fieldContext_Hook_parsedInput(ctx, field)
+			case "permissionMode":
+				return ec.fieldContext_Hook_permissionMode(ctx, field)
+			case "agentType":
+				return ec.fieldContext_Hook_agentType(ctx, field)
+			case "error":
+				return ec.fieldContext_Hook_error(ctx, field)
+			case "reason":
+				return ec.fieldContext_Hook_reason(ctx, field)
+			case "source":
+				return ec.fieldContext_Hook_source(ctx, field)
+			case "lastAssistantMessage":
+				return ec.fieldContext_Hook_lastAssistantMessage(ctx, field)
+			case "stopHookActive":
+				return ec.fieldContext_Hook_stopHookActive(ctx, field)
 			}
 			return nil, fmt.Errorf("no field named %q was found under type Hook", field.Name)
 		},
@@ -2661,6 +3255,10 @@ func (ec *executionContext) fieldContext_Mutation_recordHook(ctx context.Context
 				return ec.fieldContext_Hook_toolInput(ctx, field)
 			case "toolResponse":
 				return ec.fieldContext_Hook_toolResponse(ctx, field)
+			case "toolResponseFull":
+				return ec.fieldContext_Hook_toolResponseFull(ctx, field)
+			case "toolUseId":
+				return ec.fieldContext_Hook_toolUseId(ctx, field)
 			case "prompt":
 				return ec.fieldContext_Hook_prompt(ctx, field)
 			case "cwd":
@@ -2671,6 +3269,20 @@ func (ec *executionContext) fieldContext_Mutation_recordHook(ctx context.Context
 				return ec.fieldContext_Hook_recordedAt(ctx, field)
 			case "parsedInput":
 				return ec.fieldContext_Hook_parsedInput(ctx, field)
+			case "permissionMode":
+				return ec.fieldContext_Hook_permissionMode(ctx, field)
+			case "agentType":
+				return ec.fieldContext_Hook_agentType(ctx, field)
+			case "error":
+				return ec.fieldContext_Hook_error(ctx, field)
+			case "reason":
+				return ec.fieldContext_Hook_reason(ctx, field)
+			case "source":
+				return ec.fieldContext_Hook_source(ctx, field)
+			case "lastAssistantMessage":
+				return ec.fieldContext_Hook_lastAssistantMessage(ctx, field)
+			case "stopHookActive":
+				return ec.fieldContext_Hook_stopHookActive(ctx, field)
 			}
 			return nil, fmt.Errorf("no field named %q was found under type Hook", field.Name)
 		},
@@ -2738,6 +3350,16 @@ func (ec *executionContext) fieldContext_Mutation_summarizeSession(ctx context.C
 				return ec.fieldContext_Session_errors(ctx, field)
 			case "durationSeconds":
 				return ec.fieldContext_Session_durationSeconds(ctx, field)
+			case "gitBranch":
+				return ec.fieldContext_Session_gitBranch(ctx, field)
+			case "model":
+				return ec.fieldContext_Session_model(ctx, field)
+			case "tokenUsage":
+				return ec.fieldContext_Session_tokenUsage(ctx, field)
+			case "transcript":
+				return ec.fieldContext_Session_transcript(ctx, field)
+			case "subagents":
+				return ec.fieldContext_Session_subagents(ctx, field)
 			}
 			return nil, fmt.Errorf("no field named %q was found under type Session", field.Name)
 		},
@@ -3008,6 +3630,16 @@ func (ec *executionContext) fieldContext_Project_sessions(ctx context.Context, f
 				return ec.fieldContext_Session_errors(ctx, field)
 			case "durationSeconds":
 				return ec.fieldContext_Session_durationSeconds(ctx, field)
+			case "gitBranch":
+				return ec.fieldContext_Session_gitBranch(ctx, field)
+			case "model":
+				return ec.fieldContext_Session_model(ctx, field)
+			case "tokenUsage":
+				return ec.fieldContext_Session_tokenUsage(ctx, field)
+			case "transcript":
+				return ec.fieldContext_Session_transcript(ctx, field)
+			case "subagents":
+				return ec.fieldContext_Session_subagents(ctx, field)
 			}
 			return nil, fmt.Errorf("no field named %q was found under type Session", field.Name)
 		},
@@ -3174,6 +3806,16 @@ func (ec *executionContext) fieldContext_Query_sessions(ctx context.Context, fie
 				return ec.fieldContext_Session_errors(ctx, field)
 			case "durationSeconds":
 				return ec.fieldContext_Session_durationSeconds(ctx, field)
+			case "gitBranch":
+				return ec.fieldContext_Session_gitBranch(ctx, field)
+			case "model":
+				return ec.fieldContext_Session_model(ctx, field)
+			case "tokenUsage":
+				return ec.fieldContext_Session_tokenUsage(ctx, field)
+			case "transcript":
+				return ec.fieldContext_Session_transcript(ctx, field)
+			case "subagents":
+				return ec.fieldContext_Session_subagents(ctx, field)
 			}
 			return nil, fmt.Errorf("no field named %q was found under type Session", field.Name)
 		},
@@ -3241,6 +3883,16 @@ func (ec *executionContext) fieldContext_Query_session(ctx context.Context, fiel
 				return ec.fieldContext_Session_errors(ctx, field)
 			case "durationSeconds":
 				return ec.fieldContext_Session_durationSeconds(ctx, field)
+			case "gitBranch":
+				return ec.fieldContext_Session_gitBranch(ctx, field)
+			case "model":
+				return ec.fieldContext_Session_model(ctx, field)
+			case "tokenUsage":
+				return ec.fieldContext_Session_tokenUsage(ctx, field)
+			case "transcript":
+				return ec.fieldContext_Session_transcript(ctx, field)
+			case "subagents":
+				return ec.fieldContext_Session_subagents(ctx, field)
 			}
 			return nil, fmt.Errorf("no field named %q was found under type Session", field.Name)
 		},
@@ -3296,6 +3948,10 @@ func (ec *executionContext) fieldContext_Query_hooks(ctx context.Context, field 
 				return ec.fieldContext_Hook_toolInput(ctx, field)
 			case "toolResponse":
 				return ec.fieldContext_Hook_toolResponse(ctx, field)
+			case "toolResponseFull":
+				return ec.fieldContext_Hook_toolResponseFull(ctx, field)
+			case "toolUseId":
+				return ec.fieldContext_Hook_toolUseId(ctx, field)
 			case "prompt":
 				return ec.fieldContext_Hook_prompt(ctx, field)
 			case "cwd":
@@ -3306,6 +3962,20 @@ func (ec *executionContext) fieldContext_Query_hooks(ctx context.Context, field 
 				return ec.fieldContext_Hook_recordedAt(ctx, field)
 			case "parsedInput":
 				return ec.fieldContext_Hook_parsedInput(ctx, field)
+			case "permissionMode":
+				return ec.fieldContext_Hook_permissionMode(ctx, field)
+			case "agentType":
+				return ec.fieldContext_Hook_agentType(ctx, field)
+			case "error":
+				return ec.fieldContext_Hook_error(ctx, field)
+			case "reason":
+				return ec.fieldContext_Hook_reason(ctx, field)
+			case "source":
+				return ec.fieldContext_Hook_source(ctx, field)
+			case "lastAssistantMessage":
+				return ec.fieldContext_Hook_lastAssistantMessage(ctx, field)
+			case "stopHookActive":
+				return ec.fieldContext_Hook_stopHookActive(ctx, field)
 			}
 			return nil, fmt.Errorf("no field named %q was found under type Hook", field.Name)
 		},
@@ -3596,6 +4266,12 @@ func (ec *executionContext) fieldContext_Query_transcript(ctx context.Context, f
 				return ec.fieldContext_TranscriptMessage_role(ctx, field)
 			case "content":
 				return ec.fieldContext_TranscriptMessage_content(ctx, field)
+			case "contentBlocks":
+				return ec.fieldContext_TranscriptMessage_contentBlocks(ctx, field)
+			case "parentUuid":
+				return ec.fieldContext_TranscriptMessage_parentUuid(ctx, field)
+			case "isSidechain":
+				return ec.fieldContext_TranscriptMessage_isSidechain(ctx, field)
 			case "raw":
 				return ec.fieldContext_TranscriptMessage_raw(ctx, field)
 			}
@@ -3896,6 +4572,10 @@ func (ec *executionContext) fieldContext_SearchResult_hook(_ context.Context, fi
 				return ec.fieldContext_Hook_toolInput(ctx, field)
 			case "toolResponse":
 				return ec.fieldContext_Hook_toolResponse(ctx, field)
+			case "toolResponseFull":
+				return ec.fieldContext_Hook_toolResponseFull(ctx, field)
+			case "toolUseId":
+				return ec.fieldContext_Hook_toolUseId(ctx, field)
 			case "prompt":
 				return ec.fieldContext_Hook_prompt(ctx, field)
 			case "cwd":
@@ -3906,6 +4586,20 @@ func (ec *executionContext) fieldContext_SearchResult_hook(_ context.Context, fi
 				return ec.fieldContext_Hook_recordedAt(ctx, field)
 			case "parsedInput":
 				return ec.fieldContext_Hook_parsedInput(ctx, field)
+			case "permissionMode":
+				return ec.fieldContext_Hook_permissionMode(ctx, field)
+			case "agentType":
+				return ec.fieldContext_Hook_agentType(ctx, field)
+			case "error":
+				return ec.fieldContext_Hook_error(ctx, field)
+			case "reason":
+				return ec.fieldContext_Hook_reason(ctx, field)
+			case "source":
+				return ec.fieldContext_Hook_source(ctx, field)
+			case "lastAssistantMessage":
+				return ec.fieldContext_Hook_lastAssistantMessage(ctx, field)
+			case "stopHookActive":
+				return ec.fieldContext_Hook_stopHookActive(ctx, field)
 			}
 			return nil, fmt.Errorf("no field named %q was found under type Hook", field.Name)
 		},
@@ -4153,6 +4847,10 @@ func (ec *executionContext) fieldContext_Session_hooks(ctx context.Context, fiel
 				return ec.fieldContext_Hook_toolInput(ctx, field)
 			case "toolResponse":
 				return ec.fieldContext_Hook_toolResponse(ctx, field)
+			case "toolResponseFull":
+				return ec.fieldContext_Hook_toolResponseFull(ctx, field)
+			case "toolUseId":
+				return ec.fieldContext_Hook_toolUseId(ctx, field)
 			case "prompt":
 				return ec.fieldContext_Hook_prompt(ctx, field)
 			case "cwd":
@@ -4163,6 +4861,20 @@ func (ec *executionContext) fieldContext_Session_hooks(ctx context.Context, fiel
 				return ec.fieldContext_Hook_recordedAt(ctx, field)
 			case "parsedInput":
 				return ec.fieldContext_Hook_parsedInput(ctx, field)
+			case "permissionMode":
+				return ec.fieldContext_Hook_permissionMode(ctx, field)
+			case "agentType":
+				return ec.fieldContext_Hook_agentType(ctx, field)
+			case "error":
+				return ec.fieldContext_Hook_error(ctx, field)
+			case "reason":
+				return ec.fieldContext_Hook_reason(ctx, field)
+			case "source":
+				return ec.fieldContext_Hook_source(ctx, field)
+			case "lastAssistantMessage":
+				return ec.fieldContext_Hook_lastAssistantMessage(ctx, field)
+			case "stopHookActive":
+				return ec.fieldContext_Hook_stopHookActive(ctx, field)
 			}
 			return nil, fmt.Errorf("no field named %q was found under type Hook", field.Name)
 		},
@@ -4376,6 +5088,203 @@ func (ec *executionContext) fieldContext_Session_durationSeconds(_ context.Conte
 		IsResolver: true,
 		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
 			return nil, errors.New("field of type Float does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Session_gitBranch(ctx context.Context, field graphql.CollectedField, obj *Session) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Session_gitBranch,
+		func(ctx context.Context) (any, error) {
+			return ec.Resolvers.Session().GitBranch(ctx, obj)
+		},
+		nil,
+		ec.marshalOString2ᚖstring,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_Session_gitBranch(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Session",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Session_model(ctx context.Context, field graphql.CollectedField, obj *Session) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Session_model,
+		func(ctx context.Context) (any, error) {
+			return ec.Resolvers.Session().Model(ctx, obj)
+		},
+		nil,
+		ec.marshalOString2ᚖstring,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_Session_model(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Session",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Session_tokenUsage(ctx context.Context, field graphql.CollectedField, obj *Session) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Session_tokenUsage,
+		func(ctx context.Context) (any, error) {
+			return ec.Resolvers.Session().TokenUsage(ctx, obj)
+		},
+		nil,
+		ec.marshalOTokenUsage2ᚖgithubᚗcomᚋwricardoᚋclaudeᚑcodeᚑgraphqlᚋgraphᚐTokenUsage,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_Session_tokenUsage(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Session",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			switch field.Name {
+			case "inputTokens":
+				return ec.fieldContext_TokenUsage_inputTokens(ctx, field)
+			case "outputTokens":
+				return ec.fieldContext_TokenUsage_outputTokens(ctx, field)
+			case "cacheReadTokens":
+				return ec.fieldContext_TokenUsage_cacheReadTokens(ctx, field)
+			case "cacheCreationTokens":
+				return ec.fieldContext_TokenUsage_cacheCreationTokens(ctx, field)
+			}
+			return nil, fmt.Errorf("no field named %q was found under type TokenUsage", field.Name)
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Session_transcript(ctx context.Context, field graphql.CollectedField, obj *Session) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Session_transcript,
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.Session().Transcript(ctx, obj, fc.Args["limit"].(*int), fc.Args["offset"].(*int))
+		},
+		nil,
+		ec.marshalNTranscriptMessage2ᚕᚖgithubᚗcomᚋwricardoᚋclaudeᚑcodeᚑgraphqlᚋgraphᚐTranscriptMessageᚄ,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_Session_transcript(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Session",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			switch field.Name {
+			case "type":
+				return ec.fieldContext_TranscriptMessage_type(ctx, field)
+			case "uuid":
+				return ec.fieldContext_TranscriptMessage_uuid(ctx, field)
+			case "timestamp":
+				return ec.fieldContext_TranscriptMessage_timestamp(ctx, field)
+			case "role":
+				return ec.fieldContext_TranscriptMessage_role(ctx, field)
+			case "content":
+				return ec.fieldContext_TranscriptMessage_content(ctx, field)
+			case "contentBlocks":
+				return ec.fieldContext_TranscriptMessage_contentBlocks(ctx, field)
+			case "parentUuid":
+				return ec.fieldContext_TranscriptMessage_parentUuid(ctx, field)
+			case "isSidechain":
+				return ec.fieldContext_TranscriptMessage_isSidechain(ctx, field)
+			case "raw":
+				return ec.fieldContext_TranscriptMessage_raw(ctx, field)
+			}
+			return nil, fmt.Errorf("no field named %q was found under type TranscriptMessage", field.Name)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Session_transcript_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Session_subagents(ctx context.Context, field graphql.CollectedField, obj *Session) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Session_subagents,
+		func(ctx context.Context) (any, error) {
+			return ec.Resolvers.Session().Subagents(ctx, obj)
+		},
+		nil,
+		ec.marshalNSubagent2ᚕᚖgithubᚗcomᚋwricardoᚋclaudeᚑcodeᚑgraphqlᚋgraphᚐSubagentᚄ,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_Session_subagents(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Session",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			switch field.Name {
+			case "id":
+				return ec.fieldContext_Subagent_id(ctx, field)
+			case "agentType":
+				return ec.fieldContext_Subagent_agentType(ctx, field)
+			case "description":
+				return ec.fieldContext_Subagent_description(ctx, field)
+			case "transcript":
+				return ec.fieldContext_Subagent_transcript(ctx, field)
+			}
+			return nil, fmt.Errorf("no field named %q was found under type Subagent", field.Name)
 		},
 	}
 	return fc, nil
@@ -4859,6 +5768,328 @@ func (ec *executionContext) fieldContext_Stats_totalErrors(_ context.Context, fi
 	return fc, nil
 }
 
+func (ec *executionContext) _Subagent_id(ctx context.Context, field graphql.CollectedField, obj *Subagent) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Subagent_id,
+		func(ctx context.Context) (any, error) {
+			return obj.ID, nil
+		},
+		nil,
+		ec.marshalNString2string,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_Subagent_id(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Subagent",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Subagent_agentType(ctx context.Context, field graphql.CollectedField, obj *Subagent) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Subagent_agentType,
+		func(ctx context.Context) (any, error) {
+			return obj.AgentType, nil
+		},
+		nil,
+		ec.marshalNString2string,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_Subagent_agentType(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Subagent",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Subagent_description(ctx context.Context, field graphql.CollectedField, obj *Subagent) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Subagent_description,
+		func(ctx context.Context) (any, error) {
+			return obj.Description, nil
+		},
+		nil,
+		ec.marshalNString2string,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_Subagent_description(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Subagent",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Subagent_transcript(ctx context.Context, field graphql.CollectedField, obj *Subagent) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Subagent_transcript,
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.Subagent().Transcript(ctx, obj, fc.Args["limit"].(*int), fc.Args["offset"].(*int))
+		},
+		nil,
+		ec.marshalNTranscriptMessage2ᚕᚖgithubᚗcomᚋwricardoᚋclaudeᚑcodeᚑgraphqlᚋgraphᚐTranscriptMessageᚄ,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_Subagent_transcript(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Subagent",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			switch field.Name {
+			case "type":
+				return ec.fieldContext_TranscriptMessage_type(ctx, field)
+			case "uuid":
+				return ec.fieldContext_TranscriptMessage_uuid(ctx, field)
+			case "timestamp":
+				return ec.fieldContext_TranscriptMessage_timestamp(ctx, field)
+			case "role":
+				return ec.fieldContext_TranscriptMessage_role(ctx, field)
+			case "content":
+				return ec.fieldContext_TranscriptMessage_content(ctx, field)
+			case "contentBlocks":
+				return ec.fieldContext_TranscriptMessage_contentBlocks(ctx, field)
+			case "parentUuid":
+				return ec.fieldContext_TranscriptMessage_parentUuid(ctx, field)
+			case "isSidechain":
+				return ec.fieldContext_TranscriptMessage_isSidechain(ctx, field)
+			case "raw":
+				return ec.fieldContext_TranscriptMessage_raw(ctx, field)
+			}
+			return nil, fmt.Errorf("no field named %q was found under type TranscriptMessage", field.Name)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Subagent_transcript_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _TextBlock_text(ctx context.Context, field graphql.CollectedField, obj *TextBlock) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_TextBlock_text,
+		func(ctx context.Context) (any, error) {
+			return obj.Text, nil
+		},
+		nil,
+		ec.marshalNString2string,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_TextBlock_text(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "TextBlock",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _ThinkingBlock_thinking(ctx context.Context, field graphql.CollectedField, obj *ThinkingBlock) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_ThinkingBlock_thinking,
+		func(ctx context.Context) (any, error) {
+			return obj.Thinking, nil
+		},
+		nil,
+		ec.marshalOString2ᚖstring,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_ThinkingBlock_thinking(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "ThinkingBlock",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _TokenUsage_inputTokens(ctx context.Context, field graphql.CollectedField, obj *TokenUsage) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_TokenUsage_inputTokens,
+		func(ctx context.Context) (any, error) {
+			return obj.InputTokens, nil
+		},
+		nil,
+		ec.marshalNInt2int,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_TokenUsage_inputTokens(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "TokenUsage",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Int does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _TokenUsage_outputTokens(ctx context.Context, field graphql.CollectedField, obj *TokenUsage) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_TokenUsage_outputTokens,
+		func(ctx context.Context) (any, error) {
+			return obj.OutputTokens, nil
+		},
+		nil,
+		ec.marshalNInt2int,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_TokenUsage_outputTokens(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "TokenUsage",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Int does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _TokenUsage_cacheReadTokens(ctx context.Context, field graphql.CollectedField, obj *TokenUsage) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_TokenUsage_cacheReadTokens,
+		func(ctx context.Context) (any, error) {
+			return obj.CacheReadTokens, nil
+		},
+		nil,
+		ec.marshalNInt2int,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_TokenUsage_cacheReadTokens(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "TokenUsage",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Int does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _TokenUsage_cacheCreationTokens(ctx context.Context, field graphql.CollectedField, obj *TokenUsage) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_TokenUsage_cacheCreationTokens,
+		func(ctx context.Context) (any, error) {
+			return obj.CacheCreationTokens, nil
+		},
+		nil,
+		ec.marshalNInt2int,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_TokenUsage_cacheCreationTokens(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "TokenUsage",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Int does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
 func (ec *executionContext) _ToolError_id(ctx context.Context, field graphql.CollectedField, obj *ToolError) (ret graphql.Marshaler) {
 	return graphql.ResolveField(
 		ctx,
@@ -5149,6 +6380,93 @@ func (ec *executionContext) fieldContext_ToolErrorRate_errorRate(_ context.Conte
 	return fc, nil
 }
 
+func (ec *executionContext) _ToolResultBlock_toolUseId(ctx context.Context, field graphql.CollectedField, obj *ToolResultBlock) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_ToolResultBlock_toolUseId,
+		func(ctx context.Context) (any, error) {
+			return obj.ToolUseID, nil
+		},
+		nil,
+		ec.marshalNString2string,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_ToolResultBlock_toolUseId(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "ToolResultBlock",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _ToolResultBlock_content(ctx context.Context, field graphql.CollectedField, obj *ToolResultBlock) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_ToolResultBlock_content,
+		func(ctx context.Context) (any, error) {
+			return obj.Content, nil
+		},
+		nil,
+		ec.marshalNString2string,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_ToolResultBlock_content(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "ToolResultBlock",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _ToolResultBlock_isError(ctx context.Context, field graphql.CollectedField, obj *ToolResultBlock) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_ToolResultBlock_isError,
+		func(ctx context.Context) (any, error) {
+			return obj.IsError, nil
+		},
+		nil,
+		ec.marshalNBoolean2bool,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_ToolResultBlock_isError(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "ToolResultBlock",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Boolean does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
 func (ec *executionContext) _ToolStat_name(ctx context.Context, field graphql.CollectedField, obj *ToolStat) (ret graphql.Marshaler) {
 	return graphql.ResolveField(
 		ctx,
@@ -5202,6 +6520,93 @@ func (ec *executionContext) fieldContext_ToolStat_count(_ context.Context, field
 		IsResolver: false,
 		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
 			return nil, errors.New("field of type Int does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _ToolUseBlock_id(ctx context.Context, field graphql.CollectedField, obj *ToolUseBlock) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_ToolUseBlock_id,
+		func(ctx context.Context) (any, error) {
+			return obj.ID, nil
+		},
+		nil,
+		ec.marshalNString2string,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_ToolUseBlock_id(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "ToolUseBlock",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _ToolUseBlock_name(ctx context.Context, field graphql.CollectedField, obj *ToolUseBlock) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_ToolUseBlock_name,
+		func(ctx context.Context) (any, error) {
+			return obj.Name, nil
+		},
+		nil,
+		ec.marshalNString2string,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_ToolUseBlock_name(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "ToolUseBlock",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _ToolUseBlock_inputJson(ctx context.Context, field graphql.CollectedField, obj *ToolUseBlock) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_ToolUseBlock_inputJson,
+		func(ctx context.Context) (any, error) {
+			return obj.InputJSON, nil
+		},
+		nil,
+		ec.marshalNString2string,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_ToolUseBlock_inputJson(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "ToolUseBlock",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
 		},
 	}
 	return fc, nil
@@ -5347,6 +6752,93 @@ func (ec *executionContext) fieldContext_TranscriptMessage_content(_ context.Con
 		IsResolver: false,
 		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
 			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _TranscriptMessage_contentBlocks(ctx context.Context, field graphql.CollectedField, obj *TranscriptMessage) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_TranscriptMessage_contentBlocks,
+		func(ctx context.Context) (any, error) {
+			return ec.Resolvers.TranscriptMessage().ContentBlocks(ctx, obj)
+		},
+		nil,
+		ec.marshalOContentBlock2ᚕgithubᚗcomᚋwricardoᚋclaudeᚑcodeᚑgraphqlᚋgraphᚐContentBlockᚄ,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_TranscriptMessage_contentBlocks(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "TranscriptMessage",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type ContentBlock does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _TranscriptMessage_parentUuid(ctx context.Context, field graphql.CollectedField, obj *TranscriptMessage) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_TranscriptMessage_parentUuid,
+		func(ctx context.Context) (any, error) {
+			return obj.ParentUUID, nil
+		},
+		nil,
+		ec.marshalOString2ᚖstring,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_TranscriptMessage_parentUuid(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "TranscriptMessage",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _TranscriptMessage_isSidechain(ctx context.Context, field graphql.CollectedField, obj *TranscriptMessage) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_TranscriptMessage_isSidechain,
+		func(ctx context.Context) (any, error) {
+			return obj.IsSidechain, nil
+		},
+		nil,
+		ec.marshalNBoolean2bool,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_TranscriptMessage_isSidechain(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "TranscriptMessage",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Boolean does not have child fields")
 		},
 	}
 	return fc, nil
@@ -7020,7 +8512,7 @@ func (ec *executionContext) unmarshalInputRecordHookInput(ctx context.Context, o
 		asMap[k] = v
 	}
 
-	fieldsInOrder := [...]string{"sessionId", "eventType", "toolName", "toolInput", "toolResponse", "prompt", "cwd", "transcriptPath"}
+	fieldsInOrder := [...]string{"sessionId", "eventType", "toolName", "toolUseId", "toolInput", "toolResponse", "prompt", "cwd", "transcriptPath", "permissionMode", "agentType", "error", "reason", "source"}
 	for _, k := range fieldsInOrder {
 		v, ok := asMap[k]
 		if !ok {
@@ -7048,6 +8540,13 @@ func (ec *executionContext) unmarshalInputRecordHookInput(ctx context.Context, o
 				return it, err
 			}
 			it.ToolName = data
+		case "toolUseId":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("toolUseId"))
+			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.ToolUseID = data
 		case "toolInput":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("toolInput"))
 			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
@@ -7083,6 +8582,41 @@ func (ec *executionContext) unmarshalInputRecordHookInput(ctx context.Context, o
 				return it, err
 			}
 			it.TranscriptPath = data
+		case "permissionMode":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("permissionMode"))
+			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.PermissionMode = data
+		case "agentType":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("agentType"))
+			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.AgentType = data
+		case "error":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("error"))
+			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Error = data
+		case "reason":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("reason"))
+			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Reason = data
+		case "source":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("source"))
+			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Source = data
 		}
 	}
 	return it, nil
@@ -7128,6 +8662,47 @@ func (ec *executionContext) unmarshalInputTimeRange(ctx context.Context, obj any
 // endregion **************************** input.gotpl *****************************
 
 // region    ************************** interface.gotpl ***************************
+
+func (ec *executionContext) _ContentBlock(ctx context.Context, sel ast.SelectionSet, obj ContentBlock) graphql.Marshaler {
+	switch obj := (obj).(type) {
+	case nil:
+		return graphql.Null
+	case ToolUseBlock:
+		return ec._ToolUseBlock(ctx, sel, &obj)
+	case *ToolUseBlock:
+		if obj == nil {
+			return graphql.Null
+		}
+		return ec._ToolUseBlock(ctx, sel, obj)
+	case ToolResultBlock:
+		return ec._ToolResultBlock(ctx, sel, &obj)
+	case *ToolResultBlock:
+		if obj == nil {
+			return graphql.Null
+		}
+		return ec._ToolResultBlock(ctx, sel, obj)
+	case ThinkingBlock:
+		return ec._ThinkingBlock(ctx, sel, &obj)
+	case *ThinkingBlock:
+		if obj == nil {
+			return graphql.Null
+		}
+		return ec._ThinkingBlock(ctx, sel, obj)
+	case TextBlock:
+		return ec._TextBlock(ctx, sel, &obj)
+	case *TextBlock:
+		if obj == nil {
+			return graphql.Null
+		}
+		return ec._TextBlock(ctx, sel, obj)
+	default:
+		if typedObj, ok := obj.(graphql.Marshaler); ok {
+			return typedObj
+		} else {
+			panic(fmt.Errorf("unexpected type %T; non-generated variants of ContentBlock must implement graphql.Marshaler", obj))
+		}
+	}
+}
 
 func (ec *executionContext) _ToolInputPayload(ctx context.Context, sel ast.SelectionSet, obj ToolInputPayload) graphql.Marshaler {
 	switch obj := (obj).(type) {
@@ -7548,6 +9123,41 @@ func (ec *executionContext) _Hook(ctx context.Context, sel ast.SelectionSet, obj
 			out.Values[i] = ec._Hook_toolInput(ctx, field, obj)
 		case "toolResponse":
 			out.Values[i] = ec._Hook_toolResponse(ctx, field, obj)
+		case "toolResponseFull":
+			field := field
+
+			innerFunc := func(ctx context.Context, _ *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._Hook_toolResponseFull(ctx, field, obj)
+				return res
+			}
+
+			if field.Deferrable != nil {
+				dfs, ok := deferred[field.Deferrable.Label]
+				di := 0
+				if ok {
+					dfs.AddField(field)
+					di = len(dfs.Values) - 1
+				} else {
+					dfs = graphql.NewFieldSet([]graphql.CollectedField{field})
+					deferred[field.Deferrable.Label] = dfs
+				}
+				dfs.Concurrently(di, func(ctx context.Context) graphql.Marshaler {
+					return innerFunc(ctx, dfs)
+				})
+
+				// don't run the out.Concurrently() call below
+				out.Values[i] = graphql.Null
+				continue
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+		case "toolUseId":
+			out.Values[i] = ec._Hook_toolUseId(ctx, field, obj)
 		case "prompt":
 			out.Values[i] = ec._Hook_prompt(ctx, field, obj)
 		case "cwd":
@@ -7569,6 +9179,82 @@ func (ec *executionContext) _Hook(ctx context.Context, sel ast.SelectionSet, obj
 					}
 				}()
 				res = ec._Hook_parsedInput(ctx, field, obj)
+				return res
+			}
+
+			if field.Deferrable != nil {
+				dfs, ok := deferred[field.Deferrable.Label]
+				di := 0
+				if ok {
+					dfs.AddField(field)
+					di = len(dfs.Values) - 1
+				} else {
+					dfs = graphql.NewFieldSet([]graphql.CollectedField{field})
+					deferred[field.Deferrable.Label] = dfs
+				}
+				dfs.Concurrently(di, func(ctx context.Context) graphql.Marshaler {
+					return innerFunc(ctx, dfs)
+				})
+
+				// don't run the out.Concurrently() call below
+				out.Values[i] = graphql.Null
+				continue
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+		case "permissionMode":
+			out.Values[i] = ec._Hook_permissionMode(ctx, field, obj)
+		case "agentType":
+			out.Values[i] = ec._Hook_agentType(ctx, field, obj)
+		case "error":
+			out.Values[i] = ec._Hook_error(ctx, field, obj)
+		case "reason":
+			out.Values[i] = ec._Hook_reason(ctx, field, obj)
+		case "source":
+			out.Values[i] = ec._Hook_source(ctx, field, obj)
+		case "lastAssistantMessage":
+			field := field
+
+			innerFunc := func(ctx context.Context, _ *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._Hook_lastAssistantMessage(ctx, field, obj)
+				return res
+			}
+
+			if field.Deferrable != nil {
+				dfs, ok := deferred[field.Deferrable.Label]
+				di := 0
+				if ok {
+					dfs.AddField(field)
+					di = len(dfs.Values) - 1
+				} else {
+					dfs = graphql.NewFieldSet([]graphql.CollectedField{field})
+					deferred[field.Deferrable.Label] = dfs
+				}
+				dfs.Concurrently(di, func(ctx context.Context) graphql.Marshaler {
+					return innerFunc(ctx, dfs)
+				})
+
+				// don't run the out.Concurrently() call below
+				out.Values[i] = graphql.Null
+				continue
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+		case "stopHookActive":
+			field := field
+
+			innerFunc := func(ctx context.Context, _ *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._Hook_stopHookActive(ctx, field, obj)
 				return res
 			}
 
@@ -8702,6 +10388,177 @@ func (ec *executionContext) _Session(ctx context.Context, sel ast.SelectionSet, 
 			}
 
 			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+		case "gitBranch":
+			field := field
+
+			innerFunc := func(ctx context.Context, _ *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._Session_gitBranch(ctx, field, obj)
+				return res
+			}
+
+			if field.Deferrable != nil {
+				dfs, ok := deferred[field.Deferrable.Label]
+				di := 0
+				if ok {
+					dfs.AddField(field)
+					di = len(dfs.Values) - 1
+				} else {
+					dfs = graphql.NewFieldSet([]graphql.CollectedField{field})
+					deferred[field.Deferrable.Label] = dfs
+				}
+				dfs.Concurrently(di, func(ctx context.Context) graphql.Marshaler {
+					return innerFunc(ctx, dfs)
+				})
+
+				// don't run the out.Concurrently() call below
+				out.Values[i] = graphql.Null
+				continue
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+		case "model":
+			field := field
+
+			innerFunc := func(ctx context.Context, _ *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._Session_model(ctx, field, obj)
+				return res
+			}
+
+			if field.Deferrable != nil {
+				dfs, ok := deferred[field.Deferrable.Label]
+				di := 0
+				if ok {
+					dfs.AddField(field)
+					di = len(dfs.Values) - 1
+				} else {
+					dfs = graphql.NewFieldSet([]graphql.CollectedField{field})
+					deferred[field.Deferrable.Label] = dfs
+				}
+				dfs.Concurrently(di, func(ctx context.Context) graphql.Marshaler {
+					return innerFunc(ctx, dfs)
+				})
+
+				// don't run the out.Concurrently() call below
+				out.Values[i] = graphql.Null
+				continue
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+		case "tokenUsage":
+			field := field
+
+			innerFunc := func(ctx context.Context, _ *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._Session_tokenUsage(ctx, field, obj)
+				return res
+			}
+
+			if field.Deferrable != nil {
+				dfs, ok := deferred[field.Deferrable.Label]
+				di := 0
+				if ok {
+					dfs.AddField(field)
+					di = len(dfs.Values) - 1
+				} else {
+					dfs = graphql.NewFieldSet([]graphql.CollectedField{field})
+					deferred[field.Deferrable.Label] = dfs
+				}
+				dfs.Concurrently(di, func(ctx context.Context) graphql.Marshaler {
+					return innerFunc(ctx, dfs)
+				})
+
+				// don't run the out.Concurrently() call below
+				out.Values[i] = graphql.Null
+				continue
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+		case "transcript":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._Session_transcript(ctx, field, obj)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			if field.Deferrable != nil {
+				dfs, ok := deferred[field.Deferrable.Label]
+				di := 0
+				if ok {
+					dfs.AddField(field)
+					di = len(dfs.Values) - 1
+				} else {
+					dfs = graphql.NewFieldSet([]graphql.CollectedField{field})
+					deferred[field.Deferrable.Label] = dfs
+				}
+				dfs.Concurrently(di, func(ctx context.Context) graphql.Marshaler {
+					return innerFunc(ctx, dfs)
+				})
+
+				// don't run the out.Concurrently() call below
+				out.Values[i] = graphql.Null
+				continue
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+		case "subagents":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._Session_subagents(ctx, field, obj)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			if field.Deferrable != nil {
+				dfs, ok := deferred[field.Deferrable.Label]
+				di := 0
+				if ok {
+					dfs.AddField(field)
+					di = len(dfs.Values) - 1
+				} else {
+					dfs = graphql.NewFieldSet([]graphql.CollectedField{field})
+					deferred[field.Deferrable.Label] = dfs
+				}
+				dfs.Concurrently(di, func(ctx context.Context) graphql.Marshaler {
+					return innerFunc(ctx, dfs)
+				})
+
+				// don't run the out.Concurrently() call below
+				out.Values[i] = graphql.Null
+				continue
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
 		default:
 			panic("unknown field " + strconv.Quote(field.Name))
 		}
@@ -9052,6 +10909,220 @@ func (ec *executionContext) _Stats(ctx context.Context, sel ast.SelectionSet, ob
 	return out
 }
 
+var subagentImplementors = []string{"Subagent"}
+
+func (ec *executionContext) _Subagent(ctx context.Context, sel ast.SelectionSet, obj *Subagent) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, subagentImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferred := make(map[string]*graphql.FieldSet)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("Subagent")
+		case "id":
+			out.Values[i] = ec._Subagent_id(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				atomic.AddUint32(&out.Invalids, 1)
+			}
+		case "agentType":
+			out.Values[i] = ec._Subagent_agentType(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				atomic.AddUint32(&out.Invalids, 1)
+			}
+		case "description":
+			out.Values[i] = ec._Subagent_description(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				atomic.AddUint32(&out.Invalids, 1)
+			}
+		case "transcript":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._Subagent_transcript(ctx, field, obj)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			if field.Deferrable != nil {
+				dfs, ok := deferred[field.Deferrable.Label]
+				di := 0
+				if ok {
+					dfs.AddField(field)
+					di = len(dfs.Values) - 1
+				} else {
+					dfs = graphql.NewFieldSet([]graphql.CollectedField{field})
+					deferred[field.Deferrable.Label] = dfs
+				}
+				dfs.Concurrently(di, func(ctx context.Context) graphql.Marshaler {
+					return innerFunc(ctx, dfs)
+				})
+
+				// don't run the out.Concurrently() call below
+				out.Values[i] = graphql.Null
+				continue
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	atomic.AddInt32(&ec.Deferred, int32(len(deferred)))
+
+	for label, dfs := range deferred {
+		ec.ProcessDeferredGroup(graphql.DeferredGroup{
+			Label:    label,
+			Path:     graphql.GetPath(ctx),
+			FieldSet: dfs,
+			Context:  ctx,
+		})
+	}
+
+	return out
+}
+
+var textBlockImplementors = []string{"TextBlock", "ContentBlock"}
+
+func (ec *executionContext) _TextBlock(ctx context.Context, sel ast.SelectionSet, obj *TextBlock) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, textBlockImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferred := make(map[string]*graphql.FieldSet)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("TextBlock")
+		case "text":
+			out.Values[i] = ec._TextBlock_text(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	atomic.AddInt32(&ec.Deferred, int32(len(deferred)))
+
+	for label, dfs := range deferred {
+		ec.ProcessDeferredGroup(graphql.DeferredGroup{
+			Label:    label,
+			Path:     graphql.GetPath(ctx),
+			FieldSet: dfs,
+			Context:  ctx,
+		})
+	}
+
+	return out
+}
+
+var thinkingBlockImplementors = []string{"ThinkingBlock", "ContentBlock"}
+
+func (ec *executionContext) _ThinkingBlock(ctx context.Context, sel ast.SelectionSet, obj *ThinkingBlock) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, thinkingBlockImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferred := make(map[string]*graphql.FieldSet)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("ThinkingBlock")
+		case "thinking":
+			out.Values[i] = ec._ThinkingBlock_thinking(ctx, field, obj)
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	atomic.AddInt32(&ec.Deferred, int32(len(deferred)))
+
+	for label, dfs := range deferred {
+		ec.ProcessDeferredGroup(graphql.DeferredGroup{
+			Label:    label,
+			Path:     graphql.GetPath(ctx),
+			FieldSet: dfs,
+			Context:  ctx,
+		})
+	}
+
+	return out
+}
+
+var tokenUsageImplementors = []string{"TokenUsage"}
+
+func (ec *executionContext) _TokenUsage(ctx context.Context, sel ast.SelectionSet, obj *TokenUsage) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, tokenUsageImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferred := make(map[string]*graphql.FieldSet)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("TokenUsage")
+		case "inputTokens":
+			out.Values[i] = ec._TokenUsage_inputTokens(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "outputTokens":
+			out.Values[i] = ec._TokenUsage_outputTokens(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "cacheReadTokens":
+			out.Values[i] = ec._TokenUsage_cacheReadTokens(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "cacheCreationTokens":
+			out.Values[i] = ec._TokenUsage_cacheCreationTokens(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	atomic.AddInt32(&ec.Deferred, int32(len(deferred)))
+
+	for label, dfs := range deferred {
+		ec.ProcessDeferredGroup(graphql.DeferredGroup{
+			Label:    label,
+			Path:     graphql.GetPath(ctx),
+			FieldSet: dfs,
+			Context:  ctx,
+		})
+	}
+
+	return out
+}
+
 var toolErrorImplementors = []string{"ToolError"}
 
 func (ec *executionContext) _ToolError(ctx context.Context, sel ast.SelectionSet, obj *ToolError) graphql.Marshaler {
@@ -9167,6 +11238,55 @@ func (ec *executionContext) _ToolErrorRate(ctx context.Context, sel ast.Selectio
 	return out
 }
 
+var toolResultBlockImplementors = []string{"ToolResultBlock", "ContentBlock"}
+
+func (ec *executionContext) _ToolResultBlock(ctx context.Context, sel ast.SelectionSet, obj *ToolResultBlock) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, toolResultBlockImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferred := make(map[string]*graphql.FieldSet)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("ToolResultBlock")
+		case "toolUseId":
+			out.Values[i] = ec._ToolResultBlock_toolUseId(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "content":
+			out.Values[i] = ec._ToolResultBlock_content(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "isError":
+			out.Values[i] = ec._ToolResultBlock_isError(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	atomic.AddInt32(&ec.Deferred, int32(len(deferred)))
+
+	for label, dfs := range deferred {
+		ec.ProcessDeferredGroup(graphql.DeferredGroup{
+			Label:    label,
+			Path:     graphql.GetPath(ctx),
+			FieldSet: dfs,
+			Context:  ctx,
+		})
+	}
+
+	return out
+}
+
 var toolStatImplementors = []string{"ToolStat"}
 
 func (ec *executionContext) _ToolStat(ctx context.Context, sel ast.SelectionSet, obj *ToolStat) graphql.Marshaler {
@@ -9211,6 +11331,55 @@ func (ec *executionContext) _ToolStat(ctx context.Context, sel ast.SelectionSet,
 	return out
 }
 
+var toolUseBlockImplementors = []string{"ToolUseBlock", "ContentBlock"}
+
+func (ec *executionContext) _ToolUseBlock(ctx context.Context, sel ast.SelectionSet, obj *ToolUseBlock) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, toolUseBlockImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferred := make(map[string]*graphql.FieldSet)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("ToolUseBlock")
+		case "id":
+			out.Values[i] = ec._ToolUseBlock_id(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "name":
+			out.Values[i] = ec._ToolUseBlock_name(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "inputJson":
+			out.Values[i] = ec._ToolUseBlock_inputJson(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	atomic.AddInt32(&ec.Deferred, int32(len(deferred)))
+
+	for label, dfs := range deferred {
+		ec.ProcessDeferredGroup(graphql.DeferredGroup{
+			Label:    label,
+			Path:     graphql.GetPath(ctx),
+			FieldSet: dfs,
+			Context:  ctx,
+		})
+	}
+
+	return out
+}
+
 var transcriptMessageImplementors = []string{"TranscriptMessage"}
 
 func (ec *executionContext) _TranscriptMessage(ctx context.Context, sel ast.SelectionSet, obj *TranscriptMessage) graphql.Marshaler {
@@ -9225,7 +11394,7 @@ func (ec *executionContext) _TranscriptMessage(ctx context.Context, sel ast.Sele
 		case "type":
 			out.Values[i] = ec._TranscriptMessage_type(ctx, field, obj)
 			if out.Values[i] == graphql.Null {
-				out.Invalids++
+				atomic.AddUint32(&out.Invalids, 1)
 			}
 		case "uuid":
 			out.Values[i] = ec._TranscriptMessage_uuid(ctx, field, obj)
@@ -9235,10 +11404,50 @@ func (ec *executionContext) _TranscriptMessage(ctx context.Context, sel ast.Sele
 			out.Values[i] = ec._TranscriptMessage_role(ctx, field, obj)
 		case "content":
 			out.Values[i] = ec._TranscriptMessage_content(ctx, field, obj)
+		case "contentBlocks":
+			field := field
+
+			innerFunc := func(ctx context.Context, _ *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._TranscriptMessage_contentBlocks(ctx, field, obj)
+				return res
+			}
+
+			if field.Deferrable != nil {
+				dfs, ok := deferred[field.Deferrable.Label]
+				di := 0
+				if ok {
+					dfs.AddField(field)
+					di = len(dfs.Values) - 1
+				} else {
+					dfs = graphql.NewFieldSet([]graphql.CollectedField{field})
+					deferred[field.Deferrable.Label] = dfs
+				}
+				dfs.Concurrently(di, func(ctx context.Context) graphql.Marshaler {
+					return innerFunc(ctx, dfs)
+				})
+
+				// don't run the out.Concurrently() call below
+				out.Values[i] = graphql.Null
+				continue
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+		case "parentUuid":
+			out.Values[i] = ec._TranscriptMessage_parentUuid(ctx, field, obj)
+		case "isSidechain":
+			out.Values[i] = ec._TranscriptMessage_isSidechain(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				atomic.AddUint32(&out.Invalids, 1)
+			}
 		case "raw":
 			out.Values[i] = ec._TranscriptMessage_raw(ctx, field, obj)
 			if out.Values[i] == graphql.Null {
-				out.Invalids++
+				atomic.AddUint32(&out.Invalids, 1)
 			}
 		default:
 			panic("unknown field " + strconv.Quote(field.Name))
@@ -9697,6 +11906,16 @@ func (ec *executionContext) marshalNBoolean2bool(ctx context.Context, sel ast.Se
 	return res
 }
 
+func (ec *executionContext) marshalNContentBlock2githubᚗcomᚋwricardoᚋclaudeᚑcodeᚑgraphqlᚋgraphᚐContentBlock(ctx context.Context, sel ast.SelectionSet, v ContentBlock) graphql.Marshaler {
+	if v == nil {
+		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
+			graphql.AddErrorf(ctx, "the requested element is null which the schema does not allow")
+		}
+		return graphql.Null
+	}
+	return ec._ContentBlock(ctx, sel, v)
+}
+
 func (ec *executionContext) marshalNCwdStat2ᚕᚖgithubᚗcomᚋwricardoᚋclaudeᚑcodeᚑgraphqlᚋgraphᚐCwdStatᚄ(ctx context.Context, sel ast.SelectionSet, v []*CwdStat) graphql.Marshaler {
 	ret := graphql.MarshalSliceConcurrently(ctx, len(v), 0, false, func(ctx context.Context, i int) graphql.Marshaler {
 		fc := graphql.GetFieldContext(ctx)
@@ -10102,6 +12321,32 @@ func (ec *executionContext) marshalNString2string(ctx context.Context, sel ast.S
 	return res
 }
 
+func (ec *executionContext) marshalNSubagent2ᚕᚖgithubᚗcomᚋwricardoᚋclaudeᚑcodeᚑgraphqlᚋgraphᚐSubagentᚄ(ctx context.Context, sel ast.SelectionSet, v []*Subagent) graphql.Marshaler {
+	ret := graphql.MarshalSliceConcurrently(ctx, len(v), 0, false, func(ctx context.Context, i int) graphql.Marshaler {
+		fc := graphql.GetFieldContext(ctx)
+		fc.Result = &v[i]
+		return ec.marshalNSubagent2ᚖgithubᚗcomᚋwricardoᚋclaudeᚑcodeᚑgraphqlᚋgraphᚐSubagent(ctx, sel, v[i])
+	})
+
+	for _, e := range ret {
+		if e == graphql.Null {
+			return graphql.Null
+		}
+	}
+
+	return ret
+}
+
+func (ec *executionContext) marshalNSubagent2ᚖgithubᚗcomᚋwricardoᚋclaudeᚑcodeᚑgraphqlᚋgraphᚐSubagent(ctx context.Context, sel ast.SelectionSet, v *Subagent) graphql.Marshaler {
+	if v == nil {
+		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
+			graphql.AddErrorf(ctx, "the requested element is null which the schema does not allow")
+		}
+		return graphql.Null
+	}
+	return ec._Subagent(ctx, sel, v)
+}
+
 func (ec *executionContext) unmarshalNTime2timeᚐTime(ctx context.Context, v any) (time.Time, error) {
 	res, err := graphql.UnmarshalTime(v)
 	return res, graphql.ErrorOnPath(ctx, err)
@@ -10393,6 +12638,25 @@ func (ec *executionContext) marshalOBoolean2ᚖbool(ctx context.Context, sel ast
 	return res
 }
 
+func (ec *executionContext) marshalOContentBlock2ᚕgithubᚗcomᚋwricardoᚋclaudeᚑcodeᚑgraphqlᚋgraphᚐContentBlockᚄ(ctx context.Context, sel ast.SelectionSet, v []ContentBlock) graphql.Marshaler {
+	if v == nil {
+		return graphql.Null
+	}
+	ret := graphql.MarshalSliceConcurrently(ctx, len(v), 0, false, func(ctx context.Context, i int) graphql.Marshaler {
+		fc := graphql.GetFieldContext(ctx)
+		fc.Result = &v[i]
+		return ec.marshalNContentBlock2githubᚗcomᚋwricardoᚋclaudeᚑcodeᚑgraphqlᚋgraphᚐContentBlock(ctx, sel, v[i])
+	})
+
+	for _, e := range ret {
+		if e == graphql.Null {
+			return graphql.Null
+		}
+	}
+
+	return ret
+}
+
 func (ec *executionContext) unmarshalOEventType2ᚖgithubᚗcomᚋwricardoᚋclaudeᚑcodeᚑgraphqlᚋgraphᚐEventType(ctx context.Context, v any) (*EventType, error) {
 	if v == nil {
 		return nil, nil
@@ -10516,6 +12780,13 @@ func (ec *executionContext) unmarshalOTimeRange2ᚖgithubᚗcomᚋwricardoᚋcla
 	}
 	res, err := ec.unmarshalInputTimeRange(ctx, v)
 	return &res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) marshalOTokenUsage2ᚖgithubᚗcomᚋwricardoᚋclaudeᚑcodeᚑgraphqlᚋgraphᚐTokenUsage(ctx context.Context, sel ast.SelectionSet, v *TokenUsage) graphql.Marshaler {
+	if v == nil {
+		return graphql.Null
+	}
+	return ec._TokenUsage(ctx, sel, v)
 }
 
 func (ec *executionContext) marshalOToolInputPayload2githubᚗcomᚋwricardoᚋclaudeᚑcodeᚑgraphqlᚋgraphᚐToolInputPayload(ctx context.Context, sel ast.SelectionSet, v ToolInputPayload) graphql.Marshaler {

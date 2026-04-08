@@ -10,6 +10,12 @@ import (
 	"time"
 )
 
+// A structured content block within a transcript message.
+// Union of all possible content types that can appear in user or assistant messages.
+type ContentBlock interface {
+	IsContentBlock()
+}
+
 type ToolInputPayload interface {
 	IsToolInputPayload()
 }
@@ -65,19 +71,47 @@ type GrepInput struct {
 
 func (GrepInput) IsToolInputPayload() {}
 
-// A raw hook event emitted by Claude Code.
+// A raw hook event emitted by Claude Code and ingested via POST /hook.
+// One Hook corresponds to one event fired during a session.
 type Hook struct {
-	ID             string           `json:"id"`
-	SessionID      string           `json:"sessionId"`
-	EventType      EventType        `json:"eventType"`
-	ToolName       *string          `json:"toolName,omitempty"`
-	ToolInput      *string          `json:"toolInput,omitempty"`
-	ToolResponse   *string          `json:"toolResponse,omitempty"`
-	Prompt         *string          `json:"prompt,omitempty"`
-	Cwd            *string          `json:"cwd,omitempty"`
-	TranscriptPath *string          `json:"transcriptPath,omitempty"`
-	RecordedAt     time.Time        `json:"recordedAt"`
-	ParsedInput    ToolInputPayload `json:"parsedInput,omitempty"`
+	ID        string    `json:"id"`
+	SessionID string    `json:"sessionId"`
+	EventType EventType `json:"eventType"`
+	// Name of the tool involved, present for PreToolUse / PostToolUse events.
+	ToolName *string `json:"toolName,omitempty"`
+	// JSON-encoded tool input arguments.
+	ToolInput *string `json:"toolInput,omitempty"`
+	// JSON-encoded tool response. May be truncated for large outputs — see toolResponseFull.
+	ToolResponse *string `json:"toolResponse,omitempty"`
+	// Full tool response content read from the tool-results file on disk.
+	// Populated only when the response was large enough for Claude Code to write it to a file.
+	// Null if no tool-results file exists for this hook.
+	ToolResponseFull *string `json:"toolResponseFull,omitempty"`
+	// Tool use ID for this hook (links PreToolUse / PostToolUse pairs).
+	ToolUseID *string `json:"toolUseId,omitempty"`
+	// The user prompt active when this hook fired (UserPromptSubmit events).
+	Prompt *string `json:"prompt,omitempty"`
+	// Working directory at the time of the event.
+	Cwd *string `json:"cwd,omitempty"`
+	// Path to the session .jsonl transcript file.
+	TranscriptPath *string   `json:"transcriptPath,omitempty"`
+	RecordedAt     time.Time `json:"recordedAt"`
+	// Parsed tool input as a typed union — only populated for known tool names.
+	ParsedInput ToolInputPayload `json:"parsedInput,omitempty"`
+	// Permission mode at the time of the hook (e.g. default, auto, dontAsk).
+	PermissionMode *string `json:"permissionMode,omitempty"`
+	// Agent type for subagent-related events (e.g. Explore, Plan, Bash).
+	AgentType *string `json:"agentType,omitempty"`
+	// Error type for StopFailure events (e.g. rate_limit, server_error).
+	Error *string `json:"error,omitempty"`
+	// Reason for SessionEnd or PermissionDenied events.
+	Reason *string `json:"reason,omitempty"`
+	// Source for SessionStart or ConfigChange events (e.g. startup, project_settings).
+	Source *string `json:"source,omitempty"`
+	// Last assistant message text, parsed from raw input for Stop/SubagentStop events.
+	LastAssistantMessage *string `json:"lastAssistantMessage,omitempty"`
+	// Whether stop hook is active, parsed from raw input for Stop/SubagentStop events.
+	StopHookActive *bool `json:"stopHookActive,omitempty"`
 }
 
 type HookConnection struct {
@@ -114,21 +148,22 @@ type PageInfo struct {
 	EndCursor       *string `json:"endCursor,omitempty"`
 }
 
-// A Claude Code project, derived from ~/.claude/projects/.
+// A Claude Code project, derived from directories under ~/.claude/projects/.
+// Each directory name encodes the project's filesystem path.
 type Project struct {
-	// Encoded directory name under ~/.claude/projects/.
+	// Encoded directory name under ~/.claude/projects/ (/ and . replaced with -).
 	EncodedName string `json:"encodedName"`
-	// Decoded filesystem path.
+	// Decoded filesystem path, reconstructed via DFS over separators.
 	Path string `json:"path"`
-	// Number of transcript files found for this project.
+	// Number of .jsonl transcript files found for this project.
 	TranscriptCount int `json:"transcriptCount"`
-	// Sessions recorded in the hooks DB for this project.
+	// Sessions recorded in the hooks DB for this project, matched by cwd.
 	Sessions []*Session `json:"sessions"`
-	// Session count from the hooks DB.
+	// Number of sessions recorded for this project.
 	SessionCount int `json:"sessionCount"`
-	// Skills used in this project (extracted from Skill tool hooks).
+	// Skills invoked across all sessions in this project.
 	SkillsUsed []*SkillUsage `json:"skillsUsed"`
-	// Tool usage across all sessions in this project.
+	// Tool usage aggregated across all sessions in this project.
 	ToolUsage []*ToolStat `json:"toolUsage"`
 }
 
@@ -147,45 +182,67 @@ type RecordHookInput struct {
 	SessionID      string    `json:"sessionId"`
 	EventType      EventType `json:"eventType"`
 	ToolName       *string   `json:"toolName,omitempty"`
+	ToolUseID      *string   `json:"toolUseId,omitempty"`
 	ToolInput      *string   `json:"toolInput,omitempty"`
 	ToolResponse   *string   `json:"toolResponse,omitempty"`
 	Prompt         *string   `json:"prompt,omitempty"`
 	Cwd            *string   `json:"cwd,omitempty"`
 	TranscriptPath *string   `json:"transcriptPath,omitempty"`
+	PermissionMode *string   `json:"permissionMode,omitempty"`
+	AgentType      *string   `json:"agentType,omitempty"`
+	Error          *string   `json:"error,omitempty"`
+	Reason         *string   `json:"reason,omitempty"`
+	Source         *string   `json:"source,omitempty"`
 }
 
-// A search result hit.
+// A full-text search hit against hook prompts, tool inputs, or tool responses.
 type SearchResult struct {
 	Hook *Hook `json:"hook"`
 	// Which field matched: prompt, toolInput, or toolResponse.
 	MatchField string `json:"matchField"`
-	// Snippet of matching text with context.
+	// Snippet of matching text with >>>match<<< markers around the hit.
 	Snippet string `json:"snippet"`
 }
 
-// A Claude Code session. One session = one invocation of Claude Code.
+// A Claude Code session. One session = one invocation of Claude Code in a working directory.
+// Sessions are keyed by the session_id field in hook payloads.
 type Session struct {
-	ID          string    `json:"id"`
-	Cwd         *string   `json:"cwd,omitempty"`
+	ID string `json:"id"`
+	// Working directory where Claude Code was invoked.
+	Cwd *string `json:"cwd,omitempty"`
+	// Timestamp of the first hook recorded for this session.
 	FirstSeenAt time.Time `json:"firstSeenAt"`
-	LastSeenAt  time.Time `json:"lastSeenAt"`
-	HookCount   int       `json:"hookCount"`
-	Hooks       []*Hook   `json:"hooks"`
-	// Tool usage breakdown for this session.
+	// Timestamp of the most recent hook recorded for this session.
+	LastSeenAt time.Time `json:"lastSeenAt"`
+	// Total number of hooks recorded for this session.
+	HookCount int `json:"hookCount"`
+	// All hook events recorded for this session.
+	Hooks []*Hook `json:"hooks"`
+	// Tool usage breakdown — how many times each tool was called.
 	ToolUsage []*ToolStat `json:"toolUsage"`
-	// Skills invoked during this session.
+	// Skills (slash commands) invoked during this session.
 	SkillsUsed []*SkillUsage `json:"skillsUsed"`
-	// AI-generated summary of what happened in this session. Null if not yet generated.
+	// AI-generated summary of the session. Null until summarizeSession is called.
 	Summary *string `json:"summary,omitempty"`
 	// Number of tool calls that resulted in errors.
 	ErrorCount int `json:"errorCount"`
-	// Tool errors detected in this session.
+	// Individual tool errors detected from PostToolUse responses.
 	Errors []*ToolError `json:"errors"`
-	// Duration in seconds from first to last hook.
+	// Duration in seconds between the first and last hook. Null for single-hook sessions.
 	DurationSeconds *float64 `json:"durationSeconds,omitempty"`
+	// Git branch active at the start of the session, if any.
+	GitBranch *string `json:"gitBranch,omitempty"`
+	// Claude model used in this session (e.g. claude-sonnet-4-6). Derived from transcript.
+	Model *string `json:"model,omitempty"`
+	// Aggregated token usage from all assistant turns. Null if transcript is unavailable.
+	TokenUsage *TokenUsage `json:"tokenUsage,omitempty"`
+	// Full transcript messages for this session, read from the ~/.claude .jsonl file.
+	Transcript []*TranscriptMessage `json:"transcript"`
+	// Subagents spawned during this session (e.g. Explore, Plan, general-purpose agents).
+	Subagents []*Subagent `json:"subagents"`
 }
 
-// A Claude Code skill from ~/.claude/skills/ (user-level) or project-level.
+// A Claude Code skill (slash command) from ~/.claude/skills/ or a project-level skills directory.
 type Skill struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
@@ -193,7 +250,7 @@ type Skill struct {
 	DirName string `json:"dirName"`
 }
 
-// A record of a skill being used, with invocation count.
+// A record of a skill being invoked, with total invocation count.
 type SkillUsage struct {
 	Name  string `json:"name"`
 	Count int    `json:"count"`
@@ -207,18 +264,62 @@ type Stats struct {
 	HooksByDay         []*DayStat       `json:"hooksByDay"`
 	HooksByCwd         []*CwdStat       `json:"hooksByCwd"`
 	AvgHooksPerSession float64          `json:"avgHooksPerSession"`
-	// Error rates per tool.
+	// Error rates per tool, sorted by error rate descending.
 	ToolErrorRates []*ToolErrorRate `json:"toolErrorRates"`
 	// Total errors across all sessions.
 	TotalErrors int `json:"totalErrors"`
 }
+
+// A subagent spawned during a session.
+// Subagents have their own transcript stored under <session-id>/subagents/.
+type Subagent struct {
+	// Unique agent ID (matches the filename prefix under subagents/, e.g. agent-abc123).
+	ID string `json:"id"`
+	// Agent type as reported in the meta file, e.g. general-purpose, Explore, Plan.
+	AgentType string `json:"agentType"`
+	// Human-readable description of what the subagent was asked to do.
+	Description string `json:"description"`
+	// Full transcript of the subagent's conversation.
+	Transcript []*TranscriptMessage `json:"transcript"`
+}
+
+// A plain text content block inside a transcript message.
+// For user messages this is the prompt the user typed.
+// For assistant messages this is a text segment of Claude's response.
+type TextBlock struct {
+	Text string `json:"text"`
+}
+
+func (TextBlock) IsContentBlock() {}
+
+// An assistant thinking block.
+// Claude's extended thinking is encrypted and stored as a signature; the thinking field is always empty.
+type ThinkingBlock struct {
+	// Always empty — Claude's reasoning is encrypted and not accessible.
+	Thinking *string `json:"thinking,omitempty"`
+}
+
+func (ThinkingBlock) IsContentBlock() {}
 
 type TimeRange struct {
 	From *time.Time `json:"from,omitempty"`
 	To   *time.Time `json:"to,omitempty"`
 }
 
-// A tool error detected from a PostToolUse response.
+// Aggregated token usage across all assistant messages in a session.
+// All counts are cumulative — cache reads and creation are included in inputTokens by the API.
+type TokenUsage struct {
+	// Total input tokens sent to the model (prompt + context).
+	InputTokens int `json:"inputTokens"`
+	// Total tokens generated by the model.
+	OutputTokens int `json:"outputTokens"`
+	// Input tokens served from the prompt cache (reduces latency and cost).
+	CacheReadTokens int `json:"cacheReadTokens"`
+	// Input tokens written to the prompt cache.
+	CacheCreationTokens int `json:"cacheCreationTokens"`
+}
+
+// A tool error detected by inspecting a PostToolUse response for non-zero exit codes or error keys.
 type ToolError struct {
 	ID           string `json:"id"`
 	SessionID    string `json:"sessionId"`
@@ -229,7 +330,7 @@ type ToolError struct {
 	RecordedAt time.Time `json:"recordedAt"`
 }
 
-// Tool error rate statistics.
+// Error rate statistics for a single tool across all sessions.
 type ToolErrorRate struct {
 	ToolName   string  `json:"toolName"`
 	TotalCalls int     `json:"totalCalls"`
@@ -237,19 +338,61 @@ type ToolErrorRate struct {
 	ErrorRate  float64 `json:"errorRate"`
 }
 
+// A tool result block inside a user message.
+// Contains the output returned by a tool call.
+type ToolResultBlock struct {
+	// Matches the id field of the corresponding ToolUseBlock.
+	ToolUseID string `json:"toolUseId"`
+	// Tool output — may be stdout text, file content, or a JSON error payload.
+	Content string `json:"content"`
+	// True if the tool returned a non-zero exit code or an error response.
+	IsError bool `json:"isError"`
+}
+
+func (ToolResultBlock) IsContentBlock() {}
+
 type ToolStat struct {
 	Name  string `json:"name"`
 	Count int    `json:"count"`
 }
 
-// A single message from a session transcript (.jsonl file).
+// A tool invocation block inside an assistant message.
+// Represents a single tool call Claude decided to make.
+type ToolUseBlock struct {
+	// Tool use ID — links this call to its ToolResultBlock.
+	ID string `json:"id"`
+	// Tool name, e.g. Bash, Read, Edit, Grep.
+	Name string `json:"name"`
+	// JSON-encoded input arguments passed to the tool.
+	InputJSON string `json:"inputJson"`
+}
+
+func (ToolUseBlock) IsContentBlock() {}
+
+// A single entry from a session .jsonl transcript file.
+// One message may contain multiple content blocks (e.g. a text response followed by a tool call).
 type TranscriptMessage struct {
-	Type      string  `json:"type"`
-	UUID      *string `json:"uuid,omitempty"`
+	// Entry type: user, assistant, file-history-snapshot, system, queue-operation, summary.
+	Type string `json:"type"`
+	// Unique message ID within the transcript.
+	UUID *string `json:"uuid,omitempty"`
+	// ISO timestamp of when this message was created.
 	Timestamp *string `json:"timestamp,omitempty"`
-	Role      *string `json:"role,omitempty"`
-	Content   *string `json:"content,omitempty"`
-	// Full JSON of this transcript entry.
+	// Message role: user or assistant. Null for non-message entry types.
+	Role *string `json:"role,omitempty"`
+	// Raw content string.
+	// For simple user messages this is the prompt text.
+	// For complex messages (arrays of blocks) this is JSON-encoded.
+	// Prefer contentBlocks for structured access.
+	Content *string `json:"content,omitempty"`
+	// Structured content blocks parsed from this message.
+	// Null for entry types that carry no message content (file-history-snapshot, etc.).
+	ContentBlocks []ContentBlock `json:"contentBlocks,omitempty"`
+	// UUID of the parent message, enabling threaded conversation reconstruction.
+	ParentUUID *string `json:"parentUuid,omitempty"`
+	// True if this message originated from a subagent / sidechain, not the main conversation.
+	IsSidechain bool `json:"isSidechain"`
+	// Complete raw JSON of this transcript entry, for fields not otherwise exposed.
 	Raw string `json:"raw"`
 }
 
@@ -266,27 +409,71 @@ type WriteInput struct {
 
 func (WriteInput) IsToolInputPayload() {}
 
+// The type of event that triggered a Claude Code hook.
+// Covers all hook_event_name values Claude Code can emit.
 type EventType string
 
 const (
-	EventTypeSessionStart EventType = "SessionStart"
-	EventTypePreToolUse   EventType = "PreToolUse"
-	EventTypePostToolUse  EventType = "PostToolUse"
-	EventTypeStop         EventType = "Stop"
-	EventTypeNotification EventType = "Notification"
+	EventTypeSessionStart       EventType = "SessionStart"
+	EventTypeSessionEnd         EventType = "SessionEnd"
+	EventTypePreToolUse         EventType = "PreToolUse"
+	EventTypePostToolUse        EventType = "PostToolUse"
+	EventTypePostToolUseFailure EventType = "PostToolUseFailure"
+	EventTypeStop               EventType = "Stop"
+	EventTypeNotification       EventType = "Notification"
+	EventTypeUserPromptSubmit   EventType = "UserPromptSubmit"
+	EventTypePermissionRequest  EventType = "PermissionRequest"
+	EventTypeSubagentStart      EventType = "SubagentStart"
+	EventTypeSubagentStop       EventType = "SubagentStop"
+	EventTypeTaskCreated        EventType = "TaskCreated"
+	EventTypeTaskCompleted      EventType = "TaskCompleted"
+	EventTypeTeammateIdle       EventType = "TeammateIdle"
+	EventTypePreCompact         EventType = "PreCompact"
+	EventTypePostCompact        EventType = "PostCompact"
+	EventTypeFileChanged        EventType = "FileChanged"
+	EventTypeCwdChanged         EventType = "CwdChanged"
+	EventTypeWorktreeCreate     EventType = "WorktreeCreate"
+	EventTypeWorktreeRemove     EventType = "WorktreeRemove"
+	EventTypeConfigChange       EventType = "ConfigChange"
+	EventTypeInstructionsLoaded EventType = "InstructionsLoaded"
+	EventTypePermissionDenied   EventType = "PermissionDenied"
+	EventTypeStopFailure        EventType = "StopFailure"
+	EventTypeElicitation        EventType = "Elicitation"
+	EventTypeElicitationResult  EventType = "ElicitationResult"
 )
 
 var AllEventType = []EventType{
 	EventTypeSessionStart,
+	EventTypeSessionEnd,
 	EventTypePreToolUse,
 	EventTypePostToolUse,
+	EventTypePostToolUseFailure,
 	EventTypeStop,
 	EventTypeNotification,
+	EventTypeUserPromptSubmit,
+	EventTypePermissionRequest,
+	EventTypeSubagentStart,
+	EventTypeSubagentStop,
+	EventTypeTaskCreated,
+	EventTypeTaskCompleted,
+	EventTypeTeammateIdle,
+	EventTypePreCompact,
+	EventTypePostCompact,
+	EventTypeFileChanged,
+	EventTypeCwdChanged,
+	EventTypeWorktreeCreate,
+	EventTypeWorktreeRemove,
+	EventTypeConfigChange,
+	EventTypeInstructionsLoaded,
+	EventTypePermissionDenied,
+	EventTypeStopFailure,
+	EventTypeElicitation,
+	EventTypeElicitationResult,
 }
 
 func (e EventType) IsValid() bool {
 	switch e {
-	case EventTypeSessionStart, EventTypePreToolUse, EventTypePostToolUse, EventTypeStop, EventTypeNotification:
+	case EventTypeSessionStart, EventTypeSessionEnd, EventTypePreToolUse, EventTypePostToolUse, EventTypePostToolUseFailure, EventTypeStop, EventTypeNotification, EventTypeUserPromptSubmit, EventTypePermissionRequest, EventTypeSubagentStart, EventTypeSubagentStop, EventTypeTaskCreated, EventTypeTaskCompleted, EventTypeTeammateIdle, EventTypePreCompact, EventTypePostCompact, EventTypeFileChanged, EventTypeCwdChanged, EventTypeWorktreeCreate, EventTypeWorktreeRemove, EventTypeConfigChange, EventTypeInstructionsLoaded, EventTypePermissionDenied, EventTypeStopFailure, EventTypeElicitation, EventTypeElicitationResult:
 		return true
 	}
 	return false

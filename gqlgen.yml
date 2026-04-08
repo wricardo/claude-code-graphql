@@ -36,9 +36,33 @@ models:
         resolver: true
       durationSeconds:
         resolver: true
+      gitBranch:
+        resolver: true
+      model:
+        resolver: true
+      tokenUsage:
+        resolver: true
+      transcript:
+        resolver: true
+      subagents:
+        resolver: true
   Hook:
     fields:
       parsedInput:
+        resolver: true
+      toolResponseFull:
+        resolver: true
+      lastAssistantMessage:
+        resolver: true
+      stopHookActive:
+        resolver: true
+  Subagent:
+    fields:
+      transcript:
+        resolver: true
+  TranscriptMessage:
+    fields:
+      contentBlocks:
         resolver: true
   Stats:
     fields:

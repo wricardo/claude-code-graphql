@@ -13,8 +13,13 @@ var hookEventTypes = []string{
 	"PreToolUse",
 	"PostToolUse",
 	"Stop",
+	"SubagentStop",
 	"Notification",
 	"SessionStart",
+	"SessionEnd",
+	"UserPromptSubmit",
+	"PreCompact",
+	"PostCompact",
 }
 
 func runInstallHooks(binaryOverride string) {

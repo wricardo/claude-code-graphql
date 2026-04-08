@@ -114,16 +114,26 @@ func ListProjectSkills(baseDir, encodedName string) ([]Skill, error) {
 
 // TranscriptMessage is a single entry in a session's .jsonl transcript.
 type TranscriptMessage struct {
-	Type      string `json:"type"`
-	UUID      string `json:"uuid"`
-	Timestamp string `json:"timestamp"`
-	SessionID string `json:"sessionId"`
-	CWD       string `json:"cwd"`
+	Type        string `json:"type"`
+	UUID        string `json:"uuid"`
+	ParentUUID  string `json:"parentUuid"`
+	IsSidechain bool   `json:"isSidechain"`
+	Timestamp   string `json:"timestamp"`
+	SessionID   string `json:"sessionId"`
+	GitBranch   string `json:"gitBranch"`
+	CWD         string `json:"cwd"`
 
 	// For user/assistant messages
 	Message struct {
 		Role    string `json:"role"`
 		Content any    `json:"content"`
+		Model   string `json:"model"`
+		Usage   struct {
+			InputTokens              int `json:"input_tokens"`
+			OutputTokens             int `json:"output_tokens"`
+			CacheReadInputTokens     int `json:"cache_read_input_tokens"`
+			CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
+		} `json:"usage"`
 	} `json:"message"`
 
 	// For tool results
@@ -131,6 +141,110 @@ type TranscriptMessage struct {
 
 	// Raw JSON for full access
 	Raw json.RawMessage `json:"-"`
+}
+
+// SubagentMeta holds the metadata from an agent-*.meta.json file.
+type SubagentMeta struct {
+	AgentType   string `json:"agentType"`
+	Description string `json:"description"`
+}
+
+// Subagent represents a spawned subagent for a session.
+type Subagent struct {
+	ID          string // agent ID, e.g. "a884f9b5b5867af1b"
+	AgentType   string
+	Description string
+	// TranscriptPath is the path to the subagent's .jsonl file.
+	TranscriptPath string
+}
+
+// ListSubagents returns all subagents for a given session by reading the subagents/ directory.
+func ListSubagents(baseDir, encodedProject, sessionID string) ([]Subagent, error) {
+	dir := filepath.Join(baseDir, "projects", encodedProject, sessionID, "subagents")
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		// No subagents directory is normal
+		return nil, nil
+	}
+
+	metaByID := map[string]*SubagentMeta{}
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".meta.json") {
+			continue
+		}
+		// e.g. "agent-abc123.meta.json" → id "abc123"
+		base := strings.TrimSuffix(e.Name(), ".meta.json")
+		id := strings.TrimPrefix(base, "agent-")
+		data, err := os.ReadFile(filepath.Join(dir, e.Name()))
+		if err != nil {
+			continue
+		}
+		var meta SubagentMeta
+		if err := json.Unmarshal(data, &meta); err != nil {
+			continue
+		}
+		metaByID[id] = &meta
+	}
+
+	var out []Subagent
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".jsonl") {
+			continue
+		}
+		base := strings.TrimSuffix(e.Name(), ".jsonl")
+		id := strings.TrimPrefix(base, "agent-")
+		sa := Subagent{
+			ID:             id,
+			TranscriptPath: filepath.Join(dir, e.Name()),
+		}
+		if meta, ok := metaByID[id]; ok {
+			sa.AgentType = meta.AgentType
+			sa.Description = meta.Description
+		}
+		out = append(out, sa)
+	}
+	return out, nil
+}
+
+// ReadSubagentTranscript reads a subagent's .jsonl transcript file.
+func ReadSubagentTranscript(transcriptPath string) ([]TranscriptMessage, error) {
+	f, err := os.Open(transcriptPath)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	var out []TranscriptMessage
+	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 0, 1024*1024), 10*1024*1024)
+	for scanner.Scan() {
+		line := scanner.Bytes()
+		if len(line) == 0 {
+			continue
+		}
+		var msg TranscriptMessage
+		if err := json.Unmarshal(line, &msg); err != nil {
+			continue
+		}
+		msg.Raw = json.RawMessage(make([]byte, len(line)))
+		copy(msg.Raw, line)
+		out = append(out, msg)
+	}
+	return out, scanner.Err()
+}
+
+// ReadToolResultFile reads a tool result file from <session>/tool-results/<toolUseId>.txt.
+// Returns empty string if the file does not exist.
+func ReadToolResultFile(baseDir, encodedProject, sessionID, toolUseID string) (string, error) {
+	path := filepath.Join(baseDir, "projects", encodedProject, sessionID, "tool-results", toolUseID+".txt")
+	data, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	return string(data), nil
 }
 
 // ReadTranscript reads a session's .jsonl transcript file.

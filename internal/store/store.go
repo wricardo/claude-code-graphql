@@ -64,6 +64,8 @@ func (s *Store) migrate() error {
 
 	// Add summary column if it doesn't exist (migration for existing DBs).
 	s.db.Exec(`ALTER TABLE sessions ADD COLUMN summary TEXT NOT NULL DEFAULT ''`)
+	// Add tool_use_id column if it doesn't exist (migration for existing DBs).
+	s.db.Exec(`ALTER TABLE hooks ADD COLUMN tool_use_id TEXT NOT NULL DEFAULT ''`)
 
 	// FTS5 virtual table for full-text search across hooks.
 	_, err = s.db.Exec(`
@@ -112,6 +114,7 @@ type Hook struct {
 	SessionID      string
 	EventType      string
 	ToolName       string
+	ToolUseID      string
 	ToolInput      string
 	ToolResponse   string
 	Prompt         string
@@ -125,6 +128,7 @@ type RecordHookInput struct {
 	SessionID      string
 	EventType      string
 	ToolName       string
+	ToolUseID      string
 	ToolInput      string
 	ToolResponse   string
 	Prompt         string
@@ -152,6 +156,7 @@ func (s *Store) RecordHook(input RecordHookInput) (*Hook, error) {
 		SessionID:      input.SessionID,
 		EventType:      input.EventType,
 		ToolName:       input.ToolName,
+		ToolUseID:      input.ToolUseID,
 		ToolInput:      input.ToolInput,
 		ToolResponse:   input.ToolResponse,
 		Prompt:         input.Prompt,
@@ -162,9 +167,9 @@ func (s *Store) RecordHook(input RecordHookInput) (*Hook, error) {
 
 	_, err = s.db.Exec(`
 		INSERT INTO hooks
-			(id, session_id, event_type, tool_name, tool_input, tool_response, prompt, cwd, transcript_path, recorded_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, h.ID, h.SessionID, h.EventType, h.ToolName, h.ToolInput, h.ToolResponse, h.Prompt, h.CWD, h.TranscriptPath, h.RecordedAt)
+			(id, session_id, event_type, tool_name, tool_use_id, tool_input, tool_response, prompt, cwd, transcript_path, recorded_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, h.ID, h.SessionID, h.EventType, h.ToolName, h.ToolUseID, h.ToolInput, h.ToolResponse, h.Prompt, h.CWD, h.TranscriptPath, h.RecordedAt)
 	if err != nil {
 		return nil, fmt.Errorf("insert hook: %w", err)
 	}
@@ -215,9 +220,9 @@ func (s *Store) GetSession(id string) (*Session, error) {
 func (s *Store) GetHookByID(id string) (*Hook, error) {
 	h := &Hook{}
 	err := s.db.QueryRow(`
-		SELECT id, session_id, event_type, tool_name, tool_input, tool_response, prompt, cwd, transcript_path, recorded_at
+		SELECT id, session_id, event_type, tool_name, tool_use_id, tool_input, tool_response, prompt, cwd, transcript_path, recorded_at
 		FROM hooks WHERE id = ?
-	`, id).Scan(&h.ID, &h.SessionID, &h.EventType, &h.ToolName, &h.ToolInput, &h.ToolResponse, &h.Prompt, &h.CWD, &h.TranscriptPath, &h.RecordedAt)
+	`, id).Scan(&h.ID, &h.SessionID, &h.EventType, &h.ToolName, &h.ToolUseID, &h.ToolInput, &h.ToolResponse, &h.Prompt, &h.CWD, &h.TranscriptPath, &h.RecordedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -254,7 +259,7 @@ func (s *Store) GetHooks(f HookFilter) ([]*Hook, error) {
 		sortDir = "ASC"
 	}
 
-	q := `SELECT id, session_id, event_type, tool_name, tool_input, tool_response, prompt, cwd, transcript_path, recorded_at
+	q := `SELECT id, session_id, event_type, tool_name, tool_use_id, tool_input, tool_response, prompt, cwd, transcript_path, recorded_at
 	      FROM hooks WHERE 1=1`
 	args := []any{}
 
@@ -295,7 +300,7 @@ func (s *Store) GetHooks(f HookFilter) ([]*Hook, error) {
 	var out []*Hook
 	for rows.Next() {
 		h := &Hook{}
-		if err := rows.Scan(&h.ID, &h.SessionID, &h.EventType, &h.ToolName, &h.ToolInput, &h.ToolResponse, &h.Prompt, &h.CWD, &h.TranscriptPath, &h.RecordedAt); err != nil {
+		if err := rows.Scan(&h.ID, &h.SessionID, &h.EventType, &h.ToolName, &h.ToolUseID, &h.ToolInput, &h.ToolResponse, &h.Prompt, &h.CWD, &h.TranscriptPath, &h.RecordedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, h)
@@ -345,7 +350,7 @@ func (s *Store) GetHooksPaged(sessionID, eventType, toolName string, first int, 
 		return nil, fmt.Errorf("count hooks: %w", err)
 	}
 
-	q := `SELECT id, session_id, event_type, tool_name, tool_input, tool_response, prompt, cwd, transcript_path, recorded_at
+	q := `SELECT id, session_id, event_type, tool_name, tool_use_id, tool_input, tool_response, prompt, cwd, transcript_path, recorded_at
 	      FROM hooks ` + filterClauses
 	args := append([]any{}, filterArgs...)
 
@@ -366,7 +371,7 @@ func (s *Store) GetHooksPaged(sessionID, eventType, toolName string, first int, 
 	var hooks []*Hook
 	for rows.Next() {
 		h := &Hook{}
-		if err := rows.Scan(&h.ID, &h.SessionID, &h.EventType, &h.ToolName, &h.ToolInput, &h.ToolResponse, &h.Prompt, &h.CWD, &h.TranscriptPath, &h.RecordedAt); err != nil {
+		if err := rows.Scan(&h.ID, &h.SessionID, &h.EventType, &h.ToolName, &h.ToolUseID, &h.ToolInput, &h.ToolResponse, &h.Prompt, &h.CWD, &h.TranscriptPath, &h.RecordedAt); err != nil {
 			return nil, err
 		}
 		hooks = append(hooks, h)
@@ -485,14 +490,16 @@ func (s *Store) GetTopTools(limit int) ([]*ToolStat, error) {
 }
 
 // GetHooksByDay returns hook counts grouped by day for the last N days.
+// Uses SUBSTR(recorded_at, 1, 10) to extract the date portion because Go's
+// time.Time serializes with a "+0000 UTC" suffix that SQLite's date() cannot parse.
 func (s *Store) GetHooksByDay(days int) ([]*DayStat, error) {
 	if days <= 0 {
 		days = 30
 	}
 	rows, err := s.db.Query(`
-		SELECT date(recorded_at) as day, COUNT(*) FROM hooks
-		WHERE recorded_at >= date('now', '-' || ? || ' days')
-		GROUP BY day ORDER BY day ASC
+		SELECT SUBSTR(recorded_at, 1, 10) as day, COUNT(*) FROM hooks
+		WHERE SUBSTR(recorded_at, 1, 10) >= SUBSTR(datetime('now', '-' || ? || ' days'), 1, 10)
+		GROUP BY day HAVING day IS NOT NULL AND day != '' ORDER BY day ASC
 	`, days)
 	if err != nil {
 		return nil, err
@@ -825,9 +832,13 @@ func (s *Store) Search(query string, sessionID, cwd string, limit int) ([]*Searc
 		limit = 20
 	}
 
+	// FTS5 column indices (0-based, including UNINDEXED hook_id):
+	//   0 = hook_id (UNINDEXED), 1 = prompt, 2 = tool_input, 3 = tool_response
 	q := `
 		SELECT f.hook_id,
-			snippet(hooks_fts, -1, '>>>', '<<<', '...', 50) as snip
+			snippet(hooks_fts, 1, '>>>', '<<<', '...', 50) as prompt_snip,
+			snippet(hooks_fts, 2, '>>>', '<<<', '...', 50) as input_snip,
+			snippet(hooks_fts, 3, '>>>', '<<<', '...', 50) as response_snip
 		FROM hooks_fts f
 	`
 	args := []any{}
@@ -860,11 +871,22 @@ func (s *Store) Search(query string, sessionID, cwd string, limit int) ([]*Searc
 	var out []*SearchResult
 	for rows.Next() {
 		sr := &SearchResult{}
-		if err := rows.Scan(&sr.HookID, &sr.Snippet); err != nil {
+		var promptSnip, inputSnip, responseSnip string
+		if err := rows.Scan(&sr.HookID, &promptSnip, &inputSnip, &responseSnip); err != nil {
 			return nil, err
 		}
-		// Determine which field matched by checking the hook
-		sr.MatchField = "toolInput" // default
+		// Pick the snippet from whichever column had a match (contains highlight markers).
+		switch {
+		case strings.Contains(promptSnip, ">>>"):
+			sr.Snippet = promptSnip
+			sr.MatchField = "prompt"
+		case strings.Contains(responseSnip, ">>>"):
+			sr.Snippet = responseSnip
+			sr.MatchField = "toolResponse"
+		default:
+			sr.Snippet = inputSnip
+			sr.MatchField = "toolInput"
+		}
 		out = append(out, sr)
 	}
 	return out, rows.Err()

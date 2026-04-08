@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"embed"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -13,6 +14,9 @@ import (
 	"github.com/wricardo/claude-code-graphql/graph"
 	"github.com/wricardo/claude-code-graphql/internal/store"
 )
+
+//go:embed ui
+var uiFS embed.FS
 
 func main() {
 	if len(os.Args) < 2 {
@@ -60,14 +64,18 @@ func runRecord() {
 
 // hookPayload matches the JSON structure Claude Code sends to hooks.
 type hookPayload struct {
-	SessionID      string         `json:"session_id"`
-	HookEventName  string         `json:"hook_event_name"`
-	ToolName       string         `json:"tool_name"`
-	ToolInput      map[string]any `json:"tool_input"`
-	ToolResponse   map[string]any `json:"tool_response"`
-	Prompt         string         `json:"prompt"`
-	CWD            string         `json:"cwd"`
-	TranscriptPath string         `json:"transcript_path"`
+	SessionID            string         `json:"session_id"`
+	HookEventName        string         `json:"hook_event_name"`
+	ToolName             string         `json:"tool_name"`
+	ToolUseID            string         `json:"tool_use_id"`
+	ToolInput            map[string]any `json:"tool_input"`
+	ToolResponse         map[string]any `json:"tool_response"`
+	Prompt               string         `json:"prompt"`
+	CWD                  string         `json:"cwd"`
+	TranscriptPath       string         `json:"transcript_path"`
+	// Stop/SubagentStop event fields.
+	StopHookActive       *bool          `json:"stop_hook_active"`
+	LastAssistantMessage string         `json:"last_assistant_message"`
 }
 
 func hookHandler(s *store.Store) http.HandlerFunc {
@@ -87,6 +95,20 @@ func hookHandler(s *store.Store) http.HandlerFunc {
 			return
 		}
 
+		// For Stop/SubagentStop events, tool_input is absent but Claude Code sends
+		// stop_hook_active and last_assistant_message as top-level fields. Fold them
+		// into tool_input so resolvers can parse them from a single column.
+		if p.StopHookActive != nil || p.LastAssistantMessage != "" {
+			if p.ToolInput == nil {
+				p.ToolInput = make(map[string]any)
+			}
+			if p.StopHookActive != nil {
+				p.ToolInput["stop_hook_active"] = *p.StopHookActive
+			}
+			if p.LastAssistantMessage != "" {
+				p.ToolInput["last_assistant_message"] = p.LastAssistantMessage
+			}
+		}
 		toolInput := marshalJSON(p.ToolInput)
 		toolResponse := marshalJSON(p.ToolResponse)
 
@@ -94,6 +116,7 @@ func hookHandler(s *store.Store) http.HandlerFunc {
 			SessionID:      p.SessionID,
 			EventType:      p.HookEventName,
 			ToolName:       p.ToolName,
+			ToolUseID:      p.ToolUseID,
 			ToolInput:      toolInput,
 			ToolResponse:   toolResponse,
 			Prompt:         p.Prompt,
@@ -143,11 +166,14 @@ func runServer() {
 	mux.Handle("/graphql", gqlSrv)
 	mux.Handle("/playground", playground.Handler("Claude Code GraphQL", "/graphql"))
 	mux.HandleFunc("/hook", hookHandler(s))
+	mux.Handle("/docs", newDocsHandler())
+	mux.Handle("/docs/", newDocsHandler())
 
 	addr := ":" + port()
 	fmt.Printf("server:     http://localhost%s/graphql\n", addr)
 	fmt.Printf("playground: http://localhost%s/playground\n", addr)
 	fmt.Printf("hook:       POST http://localhost%s/hook\n", addr)
+	fmt.Printf("docs:       http://localhost%s/docs\n", addr)
 	log.Fatal(http.ListenAndServe(addr, mux))
 }
 

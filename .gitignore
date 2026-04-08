@@ -1,2 +1,5 @@
 bin/
 *.db
+*.log
+.gqlcli.json
+investigation-*.txt

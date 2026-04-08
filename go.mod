@@ -6,11 +6,15 @@ require (
 	github.com/99designs/gqlgen v0.17.89
 	github.com/google/uuid v1.6.0
 	github.com/vektah/gqlparser/v2 v2.5.32
+	github.com/yuin/goldmark v1.8.2
+	github.com/yuin/goldmark-highlighting/v2 v2.0.0-20230729083705-37449abec8cc
 	modernc.org/sqlite v1.48.0
 )
 
 require (
 	github.com/agnivade/levenshtein v1.2.1 // indirect
+	github.com/alecthomas/chroma/v2 v2.2.0 // indirect
+	github.com/dlclark/regexp2 v1.7.0 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/go-viper/mapstructure/v2 v2.5.0 // indirect
 	github.com/goccy/go-yaml v1.19.2 // indirect

@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>{{.Title}} — Claude Code GraphQL Docs</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.1/dist/cdn.min.js"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <style>
+    [x-cloak] { display: none !important; }
+    body   { font-family: 'Inter', system-ui, sans-serif; }
+    .mono  { font-family: 'JetBrains Mono', 'Fira Code', ui-monospace, monospace; }
+
+    ::-webkit-scrollbar       { width: 5px; height: 5px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: #374151; border-radius: 3px; }
+
+    .prose { color: #d1d5db; line-height: 1.75; }
+
+    .prose h1 { font-size: 1.875rem; font-weight: 700; color: #f9fafb; margin-top: 0; margin-bottom: 1rem; line-height: 1.25; border-bottom: 1px solid #1f2937; padding-bottom: 0.75rem; }
+    .prose h2 { font-size: 1.25rem;  font-weight: 600; color: #f3f4f6; margin-top: 2.5rem; margin-bottom: 0.75rem; }
+    .prose h3 { font-size: 1.05rem;  font-weight: 600; color: #e5e7eb; margin-top: 2rem;   margin-bottom: 0.5rem;  }
+    .prose h4 { font-size: 0.95rem;  font-weight: 600; color: #d1d5db; margin-top: 1.5rem; margin-bottom: 0.5rem;  }
+
+    .prose p           { margin-bottom: 1rem; }
+    .prose li          { margin-bottom: 0.35rem; }
+    .prose ul          { list-style: disc;    padding-left: 1.5rem; margin-bottom: 1rem; }
+    .prose ol          { list-style: decimal; padding-left: 1.5rem; margin-bottom: 1rem; }
+    .prose ul ul, .prose ol ul { margin-bottom: 0.25rem; margin-top: 0.25rem; }
+
+    .prose a            { color: #818cf8; text-decoration: underline; text-underline-offset: 3px; }
+    .prose a:hover      { color: #a5b4fc; }
+
+    .prose strong       { color: #f3f4f6; font-weight: 600; }
+    .prose em           { color: #e5e7eb; font-style: italic; }
+
+    .prose blockquote   { border-left: 3px solid #4f46e5; padding-left: 1rem; color: #9ca3af; font-style: italic; margin: 1.25rem 0; }
+
+    .prose hr           { border-color: #1f2937; margin: 2rem 0; }
+
+    .prose :not(pre) > code {
+      font-family: 'JetBrains Mono', ui-monospace, monospace;
+      font-size: 0.82em;
+      background: #1f2937;
+      border: 1px solid #374151;
+      color: #a5b4fc;
+      padding: 0.15em 0.45em;
+      border-radius: 4px;
+    }
+
+    .prose pre {
+      position: relative;
+      background: #111827;
+      border: 1px solid #1f2937;
+      border-radius: 0.5rem;
+      padding: 1.1rem 1.25rem;
+      overflow-x: auto;
+      margin: 1.25rem 0;
+      font-size: 0.85rem;
+      line-height: 1.65;
+    }
+    .prose pre code {
+      font-family: 'JetBrains Mono', ui-monospace, monospace;
+      background: transparent;
+      border: none;
+      padding: 0;
+      color: inherit;
+      font-size: inherit;
+    }
+
+    .copy-btn {
+      position: absolute;
+      top: 0.5rem;
+      right: 0.5rem;
+      font-size: 0.7rem;
+      font-family: 'Inter', sans-serif;
+      background: #374151;
+      color: #9ca3af;
+      border: 1px solid #4b5563;
+      border-radius: 0.25rem;
+      padding: 0.2rem 0.55rem;
+      cursor: pointer;
+      opacity: 0;
+      transition: opacity 0.15s, background 0.15s;
+    }
+    .prose pre:hover .copy-btn { opacity: 1; }
+    .copy-btn:hover  { background: #4b5563; color: #e5e7eb; }
+    .copy-btn.copied { background: #064e3b; color: #34d399; border-color: #065f46; }
+
+    .prose table      { width: 100%; border-collapse: collapse; margin: 1.25rem 0; font-size: 0.875rem; }
+    .prose thead th   { background: #111827; text-align: left; padding: 0.55rem 0.85rem; color: #9ca3af; font-weight: 500; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; border-bottom: 1px solid #374151; }
+    .prose tbody td   { padding: 0.55rem 0.85rem; border-bottom: 1px solid #1f2937; vertical-align: top; }
+    .prose tbody tr:last-child td { border-bottom: none; }
+    .prose tbody tr:hover td { background: #111827; }
+
+    .prose h2 .heading-anchor,
+    .prose h3 .heading-anchor { opacity: 0; margin-left: 0.4rem; color: #4b5563; text-decoration: none; font-size: 0.85em; }
+    .prose h2:hover .heading-anchor,
+    .prose h3:hover .heading-anchor { opacity: 1; }
+  </style>
+</head>
+
+<body class="bg-gray-950 text-gray-200 antialiased min-h-screen"
+      x-data="{ sidebar: window.innerWidth >= 1024, copied: null }"
+      x-init="
+        $nextTick(() => {
+          document.querySelectorAll('.prose pre').forEach(pre => {
+            const btn = document.createElement('button')
+            btn.className = 'copy-btn'
+            btn.textContent = 'copy'
+            btn.onclick = async () => {
+              const code = pre.querySelector('code')
+              await navigator.clipboard.writeText(code ? code.innerText : pre.innerText)
+              btn.textContent = 'copied!'
+              btn.classList.add('copied')
+              setTimeout(() => { btn.textContent = 'copy'; btn.classList.remove('copied') }, 1500)
+            }
+            pre.appendChild(btn)
+          })
+        })
+      ">
+
+  <header class="sticky top-0 z-30 h-12 bg-gray-950/90 backdrop-blur border-b border-gray-800 flex items-center px-4 gap-3">
+
+    <button @click="sidebar = !sidebar"
+            class="lg:hidden text-gray-400 hover:text-gray-200 p-1.5 rounded hover:bg-gray-800 transition-colors">
+      <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h16"/>
+      </svg>
+    </button>
+
+    <a href="/docs/introduction" class="flex items-center gap-2 shrink-0">
+      <div class="w-6 h-6 rounded-md bg-indigo-600 flex items-center justify-center">
+        <svg class="w-3.5 h-3.5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17H3a2 2 0 01-2-2V5a2 2 0 012-2h14a2 2 0 012 2v10a2 2 0 01-2 2h-2"/>
+        </svg>
+      </div>
+      <span class="text-white font-semibold text-sm">claude-code-graphql</span>
+      <span class="text-gray-600 text-sm">/ Docs</span>
+    </a>
+
+    <div class="flex-1"></div>
+
+    <a href="/playground"
+       class="text-xs text-gray-400 hover:text-gray-200 flex items-center gap-1.5 px-2.5 py-1.5 rounded-md border border-gray-800 hover:border-gray-700 hover:bg-gray-900 transition-colors">
+      <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"/>
+        <path stroke-linecap="round" stroke-linejoin="round" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+      </svg>
+      Playground
+    </a>
+  </header>
+
+  <div class="flex relative max-w-screen-2xl mx-auto">
+
+    <aside x-show="sidebar"
+           x-transition:enter="transition-transform duration-200"
+           x-transition:enter-start="-translate-x-full"
+           x-transition:enter-end="translate-x-0"
+           x-cloak
+           class="fixed lg:sticky top-12 left-0 h-[calc(100vh-3rem)] w-60 bg-gray-900 border-r border-gray-800 flex flex-col z-20 shrink-0 overflow-y-auto">
+
+      <div @click="sidebar = false" class="lg:hidden fixed inset-0 -z-10" x-show="sidebar"></div>
+
+      <nav class="p-3 space-y-5 flex-1">
+        {{range .Sections}}
+        <div>
+          {{if .Title}}
+          <div class="text-xs font-semibold text-gray-500 uppercase tracking-widest px-3 mb-1.5">{{.Title}}</div>
+          {{end}}
+          <ul class="space-y-0.5">
+            {{range .Pages}}
+            <li>
+              <a href="{{.Href}}"
+                 class="block px-3 py-1.5 rounded-md text-sm transition-colors {{if eq $.CurrentHref .Href}}bg-indigo-600/20 text-indigo-300 font-medium{{else}}text-gray-400 hover:bg-gray-800 hover:text-gray-200{{end}}">
+                {{.Title}}
+              </a>
+            </li>
+            {{end}}
+          </ul>
+        </div>
+        {{end}}
+      </nav>
+
+      <div class="px-4 py-3 border-t border-gray-800 shrink-0">
+        <a href="/graphql" target="_blank"
+           class="flex items-center gap-1.5 text-xs text-gray-500 hover:text-indigo-400 transition-colors">
+          <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M4 7v10c0 2 1 3 3 3h10c2 0 3-1 3-3V9l-4-4H7C5 5 4 6 4 7z"/>
+            <path stroke-linecap="round" stroke-linejoin="round" d="M9 1v4M15 1v4M4 11h16"/>
+          </svg>
+          GraphQL API
+        </a>
+      </div>
+    </aside>
+
+    <main class="flex-1 min-w-0 px-6 py-10 lg:px-12 max-w-3xl">
+
+      <article class="prose">
+        {{.Content}}
+      </article>
+
+      {{if or .PrevPage .NextPage}}
+      <div class="mt-14 pt-6 border-t border-gray-800 flex items-center justify-between gap-4">
+        {{if .PrevPage}}
+        <a href="{{.PrevPage.Href}}"
+           class="group flex items-center gap-2 text-sm text-gray-400 hover:text-indigo-300 transition-colors">
+          <svg class="w-4 h-4 group-hover:-translate-x-0.5 transition-transform" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7"/>
+          </svg>
+          <div>
+            <div class="text-xs text-gray-600 mb-0.5">Previous</div>
+            <div>{{.PrevPage.Title}}</div>
+          </div>
+        </a>
+        {{else}}<div></div>{{end}}
+
+        {{if .NextPage}}
+        <a href="{{.NextPage.Href}}"
+           class="group flex items-center gap-2 text-sm text-gray-400 hover:text-indigo-300 transition-colors text-right">
+          <div>
+            <div class="text-xs text-gray-600 mb-0.5">Next</div>
+            <div>{{.NextPage.Title}}</div>
+          </div>
+          <svg class="w-4 h-4 group-hover:translate-x-0.5 transition-transform" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/>
+          </svg>
+        </a>
+        {{else}}<div></div>{{end}}
+      </div>
+      {{end}}
+
+    </main>
+  </div>
+
+</body>
+</html>

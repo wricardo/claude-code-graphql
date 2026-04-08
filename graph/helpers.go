@@ -3,11 +3,13 @@ package graph
 import (
 	"bytes"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"os/exec"
 	"strings"
 	"time"
 
+	"github.com/wricardo/claude-code-graphql/internal/claude"
 	"github.com/wricardo/claude-code-graphql/internal/store"
 )
 
@@ -46,6 +48,9 @@ func storeHookToGQL(h *store.Hook) *Hook {
 	}
 	if h.TranscriptPath != "" {
 		out.TranscriptPath = &h.TranscriptPath
+	}
+	if h.ToolUseID != "" {
+		out.ToolUseID = &h.ToolUseID
 	}
 	return out
 }
@@ -96,6 +101,60 @@ func decodeCursor(cursor string) (time.Time, string, error) {
 		return time.Time{}, "", fmt.Errorf("invalid cursor time: %w", err)
 	}
 	return t, parts[1], nil
+}
+
+// claudeMsgsToGQL converts a slice of claude.TranscriptMessage to GraphQL TranscriptMessage pointers,
+// applying limit/offset pagination and populating all available fields.
+func claudeMsgsToGQL(msgs []claude.TranscriptMessage, limit, offset int) []*TranscriptMessage {
+	if offset > len(msgs) {
+		return nil
+	}
+	msgs = msgs[offset:]
+	if limit > 0 && limit < len(msgs) {
+		msgs = msgs[:limit]
+	}
+
+	out := make([]*TranscriptMessage, len(msgs))
+	for i, m := range msgs {
+		tm := &TranscriptMessage{
+			Type:        m.Type,
+			Raw:         string(m.Raw),
+			IsSidechain: m.IsSidechain,
+		}
+		if m.UUID != "" {
+			tm.UUID = &m.UUID
+		}
+		if m.ParentUUID != "" {
+			tm.ParentUUID = &m.ParentUUID
+		}
+		if m.Timestamp != "" {
+			tm.Timestamp = &m.Timestamp
+		}
+		if m.Message.Role != "" {
+			tm.Role = &m.Message.Role
+		}
+		if m.Message.Content != nil {
+			switch v := m.Message.Content.(type) {
+			case string:
+				tm.Content = &v
+			default:
+				b, _ := json.Marshal(v)
+				s := string(b)
+				tm.Content = &s
+			}
+		}
+		out[i] = tm
+	}
+	return out
+}
+
+// loadSessionTranscript finds the project for a session and reads its transcript.
+func (r *sessionResolver) loadSessionTranscript(sessionID string) ([]claude.TranscriptMessage, error) {
+	encodedProject, found := claude.FindProjectForSession(r.ClaudeDir, sessionID)
+	if !found {
+		return nil, nil
+	}
+	return claude.ReadTranscript(r.ClaudeDir, encodedProject, sessionID)
 }
 
 // satisfy fmt import used in generated stubs

@@ -1,4 +1,4 @@
-.PHONY: build generate run install install-hooks record-test stop
+.PHONY: build generate run run-bg install install-hooks record-test stop
 
 BIN      := bin/claudegql
 PORT     := 8765
@@ -15,6 +15,9 @@ generate:
 
 run: build
 	CLAUDEGQL_PORT=$(PORT) CLAUDEGQL_DB=$(DB) ./$(BIN)
+
+run-bg: stop build
+	@CLAUDEGQL_PORT=$(PORT) CLAUDEGQL_DB=$(DB) nohup ./$(BIN) > claudegql.log 2>&1 & echo "started (pid $$!), logs in claudegql.log"
 
 # Install hooks into ~/.claude/settings.json using the current binary path
 install-hooks: build
