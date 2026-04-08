@@ -160,15 +160,17 @@ func (r *sessionResolver) loadSessionTranscript(sessionID string) ([]claude.Tran
 // satisfy fmt import used in generated stubs
 var _ = fmt.Sprintf
 
-// generateSummaryViaVenu pipes a session digest to venu and returns a 1-2 sentence summary.
-func generateSummaryViaVenu(digest string) (string, error) {
-	cmd := exec.Command("venu", "Summarize this Claude Code session in 1-2 sentences. Focus on what was accomplished, not the tools used. Be specific about the code/features worked on.")
+// generateSessionSummary pipes a session digest to an LLM CLI and returns a 1-2 sentence summary.
+// The CLI must read a prompt from its first argument and session data from stdin.
+// Replace the command name and args to use your preferred LLM CLI.
+func generateSessionSummary(digest string) (string, error) {
+	cmd := exec.Command("llm", "Summarize this Claude Code session in 1-2 sentences. Focus on what was accomplished, not the tools used. Be specific about the code/features worked on.")
 	cmd.Stdin = strings.NewReader(digest)
 	var out bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = nil
 	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("venu: %w", err)
+		return "", fmt.Errorf("llm: %w", err)
 	}
 	summary := strings.TrimSpace(out.String())
 	if summary == "" {

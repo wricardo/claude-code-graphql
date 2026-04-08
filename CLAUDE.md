@@ -23,7 +23,7 @@ GraphQL analytics server that records Claude Code hook events into SQLite and ex
 
 2. **Store** (`internal/store/store.go`) — SQLite with FTS5. Tables: `sessions`, `hooks`, `hooks_fts` (virtual). The store handles all DB queries, error detection (parsing tool_response JSON for error patterns), skill extraction (parsing Skill tool_input for skill names), and FTS5 search. Timestamps stored by Go's time format include `+0000 UTC` suffix — use `SUBSTR(col, 1, 26)` when passing to SQLite date functions like `julianday()`.
 
-3. **Resolvers** (`graph/schema.resolvers.go`) — GraphQL resolvers. Most Session/Project fields are computed at query time (not persisted): toolUsage, skillsUsed, errorCount, errors, durationSeconds. Summaries are generated on demand via the `summarizeSession` mutation which pipes a session digest to `venu`.
+3. **Resolvers** (`graph/schema.resolvers.go`) — GraphQL resolvers. Most Session/Project fields are computed at query time (not persisted): toolUsage, skillsUsed, errorCount, errors, durationSeconds. Summaries are generated on demand via the `summarizeSession` mutation which pipes a session digest to a local LLM CLI.
 
 4. **Claude filesystem reader** (`internal/claude/claude.go`) — Reads `~/.claude/projects/` (project discovery), `~/.claude/skills/` (user skills), and session `.jsonl` transcripts. Project directory names encode filesystem paths by replacing `/` and `.` with `-`, which is lossy. The `resolvePathDFS()` function reconstructs paths by trying `/`, `.`, and `-` separators against the actual filesystem.
 
@@ -38,5 +38,5 @@ Fields that need computation at query time must be marked `resolver: true` in `g
 - **Hook JSON flow:** Claude Code → stdin → `claudegql record` → POST `/hook` → `store.RecordHook()` (upserts session + inserts hook + triggers FTS5 indexing)
 - **Error detection:** `isErrorResponse()` parses PostToolUse JSON responses looking for `exitCode != 0` or `"error"` keys. Short non-JSON responses are pattern-matched. Long responses are skipped to avoid false positives on source code containing "error" strings.
 - **Cursor pagination:** Keyset using `recordedAt|id` tuple encoded as base64. Query pattern: `(recorded_at < ? OR (recorded_at = ? AND id < ?))`.
-- **Session summaries:** `summarizeSession` mutation calls `Store.GetSessionActivityDigest()` (builds text with prompts, tool usage, files touched, errors) then pipes it to `venu` CLI for LLM summarization. Result cached in sessions.summary column.
+- **Session summaries:** `summarizeSession` mutation calls `Store.GetSessionActivityDigest()` (builds text with prompts, tool usage, files touched, errors) then pipes it to a local LLM CLI for summarization. Result cached in sessions.summary column. Modify `generateSessionSummary()` in `graph/helpers.go` to call any CLI.
 - **FTS5 search:** Standalone virtual table with `hook_id UNINDEXED` column. Backfilled on startup for existing hooks. INSERT trigger keeps it in sync. Search returns hook_id + snippet with `>>>match<<<` markers.

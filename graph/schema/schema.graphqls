@@ -490,7 +490,7 @@ type Mutation {
   """Ingest a raw hook event. Used by the claudegql record CLI subcommand."""
   recordHook(input: RecordHookInput!): Hook!
   """
-  Generate an AI summary for a session using venu.
+  Generate an AI summary for a session using a local LLM CLI.
   Builds a digest of prompts, tool usage, files touched, and errors, then summarizes it.
   Result is cached in the sessions table.
   """

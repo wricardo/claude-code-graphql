@@ -195,7 +195,7 @@ func (r *mutationResolver) SummarizeSession(ctx context.Context, sessionID strin
 		return nil, fmt.Errorf("build digest: %w", err)
 	}
 
-	summary, err := generateSummaryViaVenu(digest)
+	summary, err := generateSessionSummary(digest)
 	if err != nil {
 		return nil, fmt.Errorf("generate summary: %w", err)
 	}
