@@ -1,4 +1,4 @@
-.PHONY: build generate run run-bg install install-hooks record-test stop
+.PHONY: build generate run run-bg install install-hooks record-test stop dashboard
 
 BIN      := bin/claudegql
 PORT     := 8765
@@ -30,3 +30,6 @@ record-test:
 
 stop:
 	@lsof -ti:$(PORT) | xargs kill -9 2>/dev/null || true
+
+dashboard:
+	cd dashboard && npm run dev

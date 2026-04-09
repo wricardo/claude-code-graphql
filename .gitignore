@@ -4,3 +4,5 @@ bin/
 .gqlcli.json
 investigation-*.txt
 wiki/
+dashboard/node_modules/
+dashboard/dist/
