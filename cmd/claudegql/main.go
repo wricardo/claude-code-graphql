@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	"embed"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -14,9 +13,6 @@ import (
 	"github.com/wricardo/claude-code-graphql/graph"
 	"github.com/wricardo/claude-code-graphql/internal/store"
 )
-
-//go:embed ui
-var uiFS embed.FS
 
 func main() {
 	if len(os.Args) < 2 {
@@ -166,14 +162,10 @@ func runServer() {
 	mux.Handle("/graphql", gqlSrv)
 	mux.Handle("/playground", playground.Handler("Claude Code GraphQL", "/graphql"))
 	mux.HandleFunc("/hook", hookHandler(s))
-	mux.Handle("/docs", newDocsHandler())
-	mux.Handle("/docs/", newDocsHandler())
-
 	addr := ":" + port()
 	fmt.Printf("server:     http://localhost%s/graphql\n", addr)
 	fmt.Printf("playground: http://localhost%s/playground\n", addr)
 	fmt.Printf("hook:       POST http://localhost%s/hook\n", addr)
-	fmt.Printf("docs:       http://localhost%s/docs\n", addr)
 	log.Fatal(http.ListenAndServe(addr, mux))
 }
 
