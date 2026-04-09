@@ -54,14 +54,19 @@ export default function App() {
       <div className="flex h-[calc(100vh-8.5rem)] overflow-hidden">
         <main className="flex-1 overflow-y-auto p-4">
           {data ? (
-            <SessionList sessions={data.sessions} hooks={data.hooks} />
+            <SessionList
+              sessions={data.sessions}
+              recentActivity={data.recentActivity}
+              recentPrompts={data.recentPrompts}
+              recentStops={data.recentStops}
+            />
           ) : !error ? (
             <div className="text-zinc-500 text-sm mt-8 text-center">connecting…</div>
           ) : null}
         </main>
 
         <aside className="w-80 border-l border-zinc-800 overflow-y-auto">
-          {data && <ActivityFeed hooks={data.hooks} />}
+          {data && <ActivityFeed hooks={data.recentActivity} />}
         </aside>
       </div>
     </div>

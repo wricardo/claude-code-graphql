@@ -29,7 +29,7 @@ export async function fetchDashboard() {
       subagents { id agentType description }
       tokenUsage { inputTokens outputTokens cacheReadTokens cacheCreationTokens }
     }
-    hooks(filter: {}, limit: 30) {
+    recentActivity: hooks(filter: {}, limit: 30) {
       id
       eventType
       toolName
@@ -38,6 +38,18 @@ export async function fetchDashboard() {
       recordedAt
       agentType
       permissionMode
+    }
+    recentPrompts: hooks(filter: { eventType: UserPromptSubmit }, limit: 100) {
+      id
+      sessionId
+      prompt
+      recordedAt
+    }
+    recentStops: hooks(filter: { eventType: Stop }, limit: 100) {
+      id
+      sessionId
+      lastAssistantMessage
+      recordedAt
     }
     stats {
       totalSessions
@@ -48,4 +60,21 @@ export async function fetchDashboard() {
       hooksByDay(days: 7) { date count }
     }
   }`)
+}
+
+export async function fetchSessionHistory(sessionId) {
+  return gql(`
+    query SessionHistory($sid: String!) {
+      prompts: hooks(filter: { sessionId: $sid, eventType: UserPromptSubmit }, limit: 50) {
+        id
+        prompt
+        recordedAt
+      }
+      stops: hooks(filter: { sessionId: $sid, eventType: Stop }, limit: 50) {
+        id
+        lastAssistantMessage
+        recordedAt
+      }
+    }
+  `, { sid: sessionId })
 }
