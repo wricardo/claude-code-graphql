@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -12,6 +13,7 @@ import (
 	"github.com/99designs/gqlgen/graphql/handler"
 	"github.com/99designs/gqlgen/graphql/handler/extension"
 	"github.com/99designs/gqlgen/graphql/playground"
+	"github.com/vektah/gqlparser/v2/formatter"
 	"github.com/wricardo/claude-code-graphql/graph"
 	"github.com/wricardo/claude-code-graphql/internal/store"
 )
@@ -30,6 +32,8 @@ func main() {
 			os.Exit(1)
 		}
 		runQuery(os.Args[2])
+	case "schema":
+		runSchema()
 	case "install-hooks":
 		// Optional: --binary /path/to/claudegql
 		binary := ""
@@ -40,7 +44,7 @@ func main() {
 		}
 		runInstallHooks(binary)
 	default:
-		fmt.Fprintf(os.Stderr, "usage: claudegql [record|query '<graphql>'|install-hooks [--binary PATH]]\n")
+		fmt.Fprintf(os.Stderr, "usage: claudegql [record|query '<graphql>'|schema|install-hooks [--binary PATH]]\n")
 		os.Exit(1)
 	}
 }
@@ -204,6 +208,14 @@ func runQuery(query string) {
 
 	out, _ := json.MarshalIndent(resp, "", "  ")
 	fmt.Println(string(out))
+}
+
+func runSchema() {
+	schema := graph.NewExecutableSchema(graph.Config{}).Schema()
+	var buf bytes.Buffer
+	f := formatter.NewFormatter(&buf, formatter.WithCompacted(), formatter.WithoutDescription())
+	f.FormatSchema(schema)
+	fmt.Println(buf.String())
 }
 
 func runServer() {

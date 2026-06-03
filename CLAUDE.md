@@ -17,7 +17,9 @@ make record-test        # Send a test hook event to running server
 
 ## Architecture
 
-GraphQL analytics server that records Claude Code hook events into SQLite and exposes them via a GraphQL API. Three layers:
+GraphQL analytics server that records Claude Code hook events into SQLite and exposes them via a GraphQL API. The product goal is a **session intelligence layer** for Claude Code: answer what Claude is working on, which skills/subagents/tools were used, what files changed, what prompts drove the work, what failed, and where old context appears in prompts/tool input/tool output.
+
+Three layers:
 
 1. **Hook ingestion** (`cmd/claudegql/main.go`) — HTTP handler receives hook JSON from Claude Code, CLI `record` subcommand pipes stdin to the server. Hook commands are installed into `~/.claude/settings.json` and must never block Claude Code (silent failure on errors).
 
@@ -32,6 +34,21 @@ GraphQL analytics server that records Claude Code hook events into SQLite and ex
 Schema-first: edit `graph/schema/schema.graphqls` → run `make generate` → implement new resolver stubs in `graph/schema.resolvers.go`. The generator preserves existing resolver implementations and creates `panic("not implemented")` stubs for new fields.
 
 Fields that need computation at query time must be marked `resolver: true` in `gqlgen.yml` under the `models` section. The `graph/generated.go` and `graph/models_gen.go` files are auto-generated — don't edit them.
+
+## Session Intelligence Queries
+
+Use the built-in CLI for quick exploration:
+
+```bash
+claudegql schema
+claudegql query '{ sessions(limit:10) { id status cwd model lastSeenAt hookCount } }'
+claudegql query '{ sessions(limit:10) { id skillsUsed { name count } subagents { agentType description } } }'
+claudegql query '{ sessions(limit:5) { id editedFiles prompts } }'
+claudegql query '{ stats { topTools(limit:10) { name count } totalErrors totalTokenUsage { inputTokens outputTokens cacheReadTokens cacheCreationTokens } } }'
+claudegql query '{ search(query:"webhook", limit:5) { matchField snippet hook { sessionId toolName recordedAt } } }'
+```
+
+Important fields to preserve and document when changing schema/resolvers: `skillsUsed`, `subagents`, `editedFiles`, `prompts`, `toolUsage`, `errors`, `tokenUsage`, `search.matchField`, and typed `parsedInput`.
 
 ## Key Patterns
 
