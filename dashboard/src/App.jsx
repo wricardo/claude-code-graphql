@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { fetchDashboard } from './api'
 import StatsBar from './components/StatsBar'
 import SessionList from './components/SessionList'
-import ActivityFeed from './components/ActivityFeed'
+import RightPanel from './components/RightPanel'
 
 const POLL_MS = 5000
 
@@ -37,9 +37,7 @@ export default function App() {
         </div>
         <div className="flex items-center gap-4 text-xs text-zinc-500">
           {error && <span className="text-red-400">⚠ {error}</span>}
-          {lastUpdated && (
-            <span>updated {lastUpdated.toLocaleTimeString()}</span>
-          )}
+          {lastUpdated && <span>updated {lastUpdated.toLocaleTimeString()}</span>}
           <span className="flex items-center gap-1">
             <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse inline-block" />
             polling {POLL_MS / 1000}s
@@ -65,8 +63,15 @@ export default function App() {
           ) : null}
         </main>
 
-        <aside className="w-80 border-l border-zinc-800 overflow-y-auto">
-          {data && <ActivityFeed hooks={data.recentActivity} />}
+        <aside className="w-80 overflow-hidden flex flex-col">
+          {data && (
+            <RightPanel
+              hooks={data.recentActivity}
+              sessions={data.sessions}
+              userSkills={data.userSkills}
+              toolErrorRates={data.stats.toolErrorRates}
+            />
+          )}
         </aside>
       </div>
     </div>

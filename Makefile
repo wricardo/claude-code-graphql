@@ -8,7 +8,7 @@ build:
 	go build -o $(BIN) ./cmd/claudegql
 
 install: build
-	cp $(BIN) $(GOPATH)/bin/claudegql
+	sudo install -m 755 $(BIN) /usr/local/bin/claudegql
 
 generate:
 	go run github.com/99designs/gqlgen generate

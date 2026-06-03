@@ -112,6 +112,8 @@ type Hook struct {
 	LastAssistantMessage *string `json:"lastAssistantMessage,omitempty"`
 	// Whether stop hook is active, parsed from raw input for Stop/SubagentStop events.
 	StopHookActive *bool `json:"stopHookActive,omitempty"`
+	// Parent session for this hook.
+	Session *Session `json:"session,omitempty"`
 }
 
 type HookConnection struct {
@@ -214,6 +216,8 @@ type Session struct {
 	FirstSeenAt time.Time `json:"firstSeenAt"`
 	// Timestamp of the most recent hook recorded for this session.
 	LastSeenAt time.Time `json:"lastSeenAt"`
+	// Lifecycle status: ACTIVE (recent activity), IDLE (no recent hooks), or STOPPED (terminal event seen).
+	Status SessionStatus `json:"status"`
 	// Total number of hooks recorded for this session.
 	HookCount int `json:"hookCount"`
 	// All hook events recorded for this session.
@@ -240,6 +244,12 @@ type Session struct {
 	Transcript []*TranscriptMessage `json:"transcript"`
 	// Subagents spawned during this session (e.g. Explore, Plan, general-purpose agents).
 	Subagents []*Subagent `json:"subagents"`
+	// User prompts submitted during this session, ordered by time.
+	Prompts []string `json:"prompts"`
+	// Distinct files edited or written during this session, ordered by first occurrence.
+	EditedFiles []string `json:"editedFiles"`
+	// Project this session belongs to, matched by cwd.
+	Project *Project `json:"project,omitempty"`
 }
 
 // A Claude Code skill (slash command) from ~/.claude/skills/ or a project-level skills directory.
@@ -268,6 +278,8 @@ type Stats struct {
 	ToolErrorRates []*ToolErrorRate `json:"toolErrorRates"`
 	// Total errors across all sessions.
 	TotalErrors int `json:"totalErrors"`
+	// Aggregate token usage across all ingested transcript messages.
+	TotalTokenUsage *TokenUsage `json:"totalTokenUsage,omitempty"`
 }
 
 // A subagent spawned during a session.
@@ -394,6 +406,8 @@ type TranscriptMessage struct {
 	IsSidechain bool `json:"isSidechain"`
 	// Complete raw JSON of this transcript entry, for fields not otherwise exposed.
 	Raw string `json:"raw"`
+	// Token usage for this message. Only populated for assistant messages.
+	TokenUsage *TokenUsage `json:"tokenUsage,omitempty"`
 }
 
 type UnknownInput struct {
@@ -562,6 +576,67 @@ func (e *HookSortField) UnmarshalJSON(b []byte) error {
 }
 
 func (e HookSortField) MarshalJSON() ([]byte, error) {
+	var buf bytes.Buffer
+	e.MarshalGQL(&buf)
+	return buf.Bytes(), nil
+}
+
+// Lifecycle status of a session.
+// ACTIVE  — hook received within the last 3 minutes and no terminal event seen.
+// IDLE    — no recent hook activity and no terminal event.
+// STOPPED — last hook was Stop, SubagentStop, or SessionEnd.
+type SessionStatus string
+
+const (
+	SessionStatusActive  SessionStatus = "ACTIVE"
+	SessionStatusIdle    SessionStatus = "IDLE"
+	SessionStatusStopped SessionStatus = "STOPPED"
+)
+
+var AllSessionStatus = []SessionStatus{
+	SessionStatusActive,
+	SessionStatusIdle,
+	SessionStatusStopped,
+}
+
+func (e SessionStatus) IsValid() bool {
+	switch e {
+	case SessionStatusActive, SessionStatusIdle, SessionStatusStopped:
+		return true
+	}
+	return false
+}
+
+func (e SessionStatus) String() string {
+	return string(e)
+}
+
+func (e *SessionStatus) UnmarshalGQL(v any) error {
+	str, ok := v.(string)
+	if !ok {
+		return fmt.Errorf("enums must be strings")
+	}
+
+	*e = SessionStatus(str)
+	if !e.IsValid() {
+		return fmt.Errorf("%s is not a valid SessionStatus", str)
+	}
+	return nil
+}
+
+func (e SessionStatus) MarshalGQL(w io.Writer) {
+	fmt.Fprint(w, strconv.Quote(e.String()))
+}
+
+func (e *SessionStatus) UnmarshalJSON(b []byte) error {
+	s, err := strconv.Unquote(string(b))
+	if err != nil {
+		return err
+	}
+	return e.UnmarshalGQL(s)
+}
+
+func (e SessionStatus) MarshalJSON() ([]byte, error) {
 	var buf bytes.Buffer
 	e.MarshalGQL(&buf)
 	return buf.Bytes(), nil

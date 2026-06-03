@@ -148,13 +148,49 @@ func claudeMsgsToGQL(msgs []claude.TranscriptMessage, limit, offset int) []*Tran
 	return out
 }
 
-// loadSessionTranscript finds the project for a session and reads its transcript.
+// loadSessionTranscript finds the project for a session and reads its transcript from filesystem.
+// Used only for fields that derive metadata (gitBranch, model, tokenUsage) from transcript content.
 func (r *sessionResolver) loadSessionTranscript(sessionID string) ([]claude.TranscriptMessage, error) {
 	encodedProject, found := claude.FindProjectForSession(r.ClaudeDir, sessionID)
 	if !found {
 		return nil, nil
 	}
 	return claude.ReadTranscript(r.ClaudeDir, encodedProject, sessionID)
+}
+
+// storeMsgsToGQL converts store.TranscriptMessage rows to GraphQL TranscriptMessage pointers.
+func storeMsgsToGQL(msgs []*store.TranscriptMessage) []*TranscriptMessage {
+	out := make([]*TranscriptMessage, 0, len(msgs))
+	for _, m := range msgs {
+		tm := &TranscriptMessage{
+			Type:        m.Type,
+			Raw:         m.Raw,
+			IsSidechain: m.IsSidechain,
+		}
+		if m.UUID != "" {
+			tm.UUID = &m.UUID
+		}
+		if m.ParentUUID != "" {
+			tm.ParentUUID = &m.ParentUUID
+		}
+		if m.Timestamp != "" {
+			tm.Timestamp = &m.Timestamp
+		}
+		if m.Role != "" {
+			tm.Role = &m.Role
+		}
+		if m.Content != "" {
+			content := m.Content
+			// Unwrap JSON string if content is a quoted string (simple user messages).
+			var s string
+			if json.Unmarshal([]byte(content), &s) == nil {
+				content = s
+			}
+			tm.Content = &content
+		}
+		out = append(out, tm)
+	}
+	return out
 }
 
 // satisfy fmt import used in generated stubs

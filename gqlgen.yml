@@ -20,6 +20,8 @@ models:
     model: github.com/99designs/gqlgen/graphql.Time
   Session:
     fields:
+      status:
+        resolver: true
       hooks:
         resolver: true
       hookCount:
@@ -46,6 +48,12 @@ models:
         resolver: true
       subagents:
         resolver: true
+      prompts:
+        resolver: true
+      editedFiles:
+        resolver: true
+      project:
+        resolver: true
   Hook:
     fields:
       parsedInput:
@@ -56,6 +64,8 @@ models:
         resolver: true
       stopHookActive:
         resolver: true
+      session:
+        resolver: true
   Subagent:
     fields:
       transcript:
@@ -63,6 +73,8 @@ models:
   TranscriptMessage:
     fields:
       contentBlocks:
+        resolver: true
+      tokenUsage:
         resolver: true
   Stats:
     fields:
@@ -75,6 +87,8 @@ models:
       toolErrorRates:
         resolver: true
       totalErrors:
+        resolver: true
+      totalTokenUsage:
         resolver: true
   Project:
     fields:

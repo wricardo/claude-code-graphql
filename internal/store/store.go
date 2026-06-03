@@ -1,9 +1,11 @@
 package store
 
 import (
+	"bufio"
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -62,10 +64,38 @@ func (s *Store) migrate() error {
 		return err
 	}
 
+	_, err = s.db.Exec(`
+		CREATE TABLE IF NOT EXISTS transcript_messages (
+			uuid         TEXT PRIMARY KEY,
+			session_id   TEXT NOT NULL,
+			type         TEXT NOT NULL DEFAULT '',
+			parent_uuid  TEXT NOT NULL DEFAULT '',
+			is_sidechain INTEGER NOT NULL DEFAULT 0,
+			timestamp    TEXT NOT NULL DEFAULT '',
+			role         TEXT NOT NULL DEFAULT '',
+			content      TEXT NOT NULL DEFAULT '',
+			model        TEXT NOT NULL DEFAULT '',
+			git_branch   TEXT NOT NULL DEFAULT '',
+			cwd          TEXT NOT NULL DEFAULT '',
+			raw          TEXT NOT NULL DEFAULT ''
+		);
+		CREATE INDEX IF NOT EXISTS idx_transcript_messages_session_id ON transcript_messages(session_id, timestamp);
+	`)
+	if err != nil {
+		return fmt.Errorf("create transcript_messages: %w", err)
+	}
+
+	// Backfill transcript_messages for sessions not yet ingested.
+	go s.backfillTranscripts()
+
 	// Add summary column if it doesn't exist (migration for existing DBs).
 	s.db.Exec(`ALTER TABLE sessions ADD COLUMN summary TEXT NOT NULL DEFAULT ''`)
 	// Add tool_use_id column if it doesn't exist (migration for existing DBs).
 	s.db.Exec(`ALTER TABLE hooks ADD COLUMN tool_use_id TEXT NOT NULL DEFAULT ''`)
+	// Add error_message column — precomputed at insert time to avoid full scans at query time.
+	s.db.Exec(`ALTER TABLE hooks ADD COLUMN error_message TEXT NOT NULL DEFAULT ''`)
+	// Backfill error_message for existing hooks.
+	s.backfillErrorMessages()
 
 	// FTS5 virtual table for full-text search across hooks.
 	_, err = s.db.Exec(`
@@ -136,6 +166,45 @@ type RecordHookInput struct {
 	TranscriptPath string
 }
 
+// noErrorSentinel is written to error_message for PostToolUse hooks that have been
+// checked and contain no error. This prevents re-scanning them on every startup.
+const noErrorSentinel = "\x00"
+
+// backfillErrorMessages processes PostToolUse hooks that haven't been checked yet
+// (error_message is ''). It sets error_message to the extracted error string if an
+// error is detected, or to noErrorSentinel if not.
+func (s *Store) backfillErrorMessages() {
+	rows, err := s.db.Query(`
+		SELECT id, tool_response FROM hooks
+		WHERE event_type = 'PostToolUse' AND tool_response != '' AND error_message = ''
+	`)
+	if err != nil {
+		return
+	}
+	type row struct {
+		id       string
+		response string
+	}
+	var toUpdate []row
+	for rows.Next() {
+		var r row
+		if err := rows.Scan(&r.id, &r.response); err != nil {
+			rows.Close()
+			return
+		}
+		toUpdate = append(toUpdate, r)
+	}
+	rows.Close()
+
+	for _, r := range toUpdate {
+		_, msg := isErrorResponse(r.response)
+		if msg == "" {
+			msg = noErrorSentinel
+		}
+		s.db.Exec(`UPDATE hooks SET error_message = ? WHERE id = ?`, msg, r.id)
+	}
+}
+
 // RecordHook upserts the session and inserts a new hook row.
 func (s *Store) RecordHook(input RecordHookInput) (*Hook, error) {
 	now := time.Now().UTC()
@@ -149,6 +218,16 @@ func (s *Store) RecordHook(input RecordHookInput) (*Hook, error) {
 	`, input.SessionID, input.CWD, now, now)
 	if err != nil {
 		return nil, fmt.Errorf("upsert session: %w", err)
+	}
+
+	// Precompute error_message for PostToolUse hooks at insert time so queries
+	// can filter by this column instead of scanning all tool_response values.
+	errorMsg := noErrorSentinel
+	if input.EventType == "PostToolUse" && input.ToolResponse != "" {
+		_, msg := isErrorResponse(input.ToolResponse)
+		if msg != "" {
+			errorMsg = msg
+		}
 	}
 
 	h := &Hook{
@@ -167,14 +246,137 @@ func (s *Store) RecordHook(input RecordHookInput) (*Hook, error) {
 
 	_, err = s.db.Exec(`
 		INSERT INTO hooks
-			(id, session_id, event_type, tool_name, tool_use_id, tool_input, tool_response, prompt, cwd, transcript_path, recorded_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, h.ID, h.SessionID, h.EventType, h.ToolName, h.ToolUseID, h.ToolInput, h.ToolResponse, h.Prompt, h.CWD, h.TranscriptPath, h.RecordedAt)
+			(id, session_id, event_type, tool_name, tool_use_id, tool_input, tool_response, prompt, cwd, transcript_path, recorded_at, error_message)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, h.ID, h.SessionID, h.EventType, h.ToolName, h.ToolUseID, h.ToolInput, h.ToolResponse, h.Prompt, h.CWD, h.TranscriptPath, h.RecordedAt, errorMsg)
 	if err != nil {
 		return nil, fmt.Errorf("insert hook: %w", err)
 	}
 
+	if input.TranscriptPath != "" {
+		s.IngestTranscript(input.TranscriptPath, input.SessionID)
+	}
+
 	return h, nil
+}
+
+// TranscriptMessage is a single stored transcript entry.
+type TranscriptMessage struct {
+	UUID        string
+	SessionID   string
+	Type        string
+	ParentUUID  string
+	IsSidechain bool
+	Timestamp   string
+	Role        string
+	Content     string
+	Model       string
+	GitBranch   string
+	CWD         string
+	Raw         string
+}
+
+// IngestTranscript reads a .jsonl transcript file and upserts new messages into transcript_messages.
+// Entries without a uuid are skipped. Errors are silently ignored — never block the caller.
+func (s *Store) IngestTranscript(path, sessionID string) {
+	f, err := os.Open(path)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+
+	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 1<<20), 1<<20) // 1 MB per line
+	for scanner.Scan() {
+		line := scanner.Bytes()
+		var m struct {
+			UUID        string `json:"uuid"`
+			Type        string `json:"type"`
+			ParentUUID  string `json:"parentUuid"`
+			IsSidechain bool   `json:"isSidechain"`
+			Timestamp   string `json:"timestamp"`
+			SessionID   string `json:"sessionId"`
+			GitBranch   string `json:"gitBranch"`
+			CWD         string `json:"cwd"`
+			Message     struct {
+				Role    string          `json:"role"`
+				Content json.RawMessage `json:"content"`
+				Model   string          `json:"model"`
+			} `json:"message"`
+		}
+		if err := json.Unmarshal(line, &m); err != nil || m.UUID == "" {
+			continue
+		}
+		content := ""
+		if m.Message.Content != nil {
+			content = string(m.Message.Content)
+		}
+		sid := sessionID
+		if m.SessionID != "" {
+			sid = m.SessionID
+		}
+		s.db.Exec(`
+			INSERT OR IGNORE INTO transcript_messages
+				(uuid, session_id, type, parent_uuid, is_sidechain, timestamp, role, content, model, git_branch, cwd, raw)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		`, m.UUID, sid, m.Type, m.ParentUUID, m.IsSidechain, m.Timestamp,
+			m.Message.Role, content, m.Message.Model, m.GitBranch, m.CWD, string(line))
+	}
+}
+
+// backfillTranscripts ingests transcripts for sessions that have none stored yet.
+// Reads distinct transcript_path values from hooks, skips sessions already in transcript_messages.
+func (s *Store) backfillTranscripts() {
+	rows, err := s.db.Query(`
+		SELECT DISTINCT session_id, transcript_path FROM hooks
+		WHERE transcript_path != ''
+		AND session_id NOT IN (SELECT DISTINCT session_id FROM transcript_messages)
+	`)
+	if err != nil {
+		return
+	}
+	type entry struct{ sessionID, path string }
+	var entries []entry
+	for rows.Next() {
+		var e entry
+		if err := rows.Scan(&e.sessionID, &e.path); err != nil {
+			break
+		}
+		entries = append(entries, e)
+	}
+	rows.Close()
+	for _, e := range entries {
+		s.IngestTranscript(e.path, e.sessionID)
+	}
+}
+
+// GetTranscript returns stored transcript messages for a session ordered by timestamp.
+func (s *Store) GetTranscript(sessionID string, limit, offset int) ([]*TranscriptMessage, error) {
+	if limit <= 0 {
+		limit = 200
+	}
+	rows, err := s.db.Query(`
+		SELECT uuid, session_id, type, parent_uuid, is_sidechain, timestamp, role, content, model, git_branch, cwd, raw
+		FROM transcript_messages
+		WHERE session_id = ?
+		ORDER BY timestamp ASC
+		LIMIT ? OFFSET ?
+	`, sessionID, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []*TranscriptMessage
+	for rows.Next() {
+		m := &TranscriptMessage{}
+		if err := rows.Scan(&m.UUID, &m.SessionID, &m.Type, &m.ParentUUID, &m.IsSidechain,
+			&m.Timestamp, &m.Role, &m.Content, &m.Model, &m.GitBranch, &m.CWD, &m.Raw); err != nil {
+			return nil, err
+		}
+		out = append(out, m)
+	}
+	return out, rows.Err()
 }
 
 // GetSessions returns sessions ordered by most recent activity.
@@ -561,10 +763,10 @@ func (s *Store) GetSessionsByCwd(cwd string, limit, offset int) ([]*Session, err
 	rows, err := s.db.Query(`
 		SELECT id, cwd, first_seen_at, last_seen_at, summary
 		FROM sessions
-		WHERE cwd = ?
+		WHERE cwd = ? OR cwd LIKE ? ESCAPE '\'
 		ORDER BY last_seen_at DESC
 		LIMIT ? OFFSET ?
-	`, cwd, limit, offset)
+	`, cwd, strings.ReplaceAll(cwd, "%", `\%`)+"/"+"%", limit, offset)
 	if err != nil {
 		return nil, err
 	}
@@ -584,7 +786,8 @@ func (s *Store) GetSessionsByCwd(cwd string, limit, offset int) ([]*Session, err
 // CountSessionsByCwd returns the session count for a given cwd.
 func (s *Store) CountSessionsByCwd(cwd string) (int, error) {
 	var n int
-	err := s.db.QueryRow(`SELECT COUNT(*) FROM sessions WHERE cwd = ?`, cwd).Scan(&n)
+	err := s.db.QueryRow(`SELECT COUNT(*) FROM sessions WHERE cwd = ? OR cwd LIKE ? ESCAPE '\'`,
+		cwd, strings.ReplaceAll(cwd, "%", `\%`)+"/"+"%").Scan(&n)
 	return n, err
 }
 
@@ -991,13 +1194,14 @@ func matchErrorPatterns(s string) (bool, string) {
 }
 
 // GetSessionErrors returns all detected errors for a session.
+// Uses the precomputed error_message column.
 func (s *Store) GetSessionErrors(sessionID string) ([]*ToolError, error) {
 	rows, err := s.db.Query(`
-		SELECT id, session_id, tool_name, tool_input, tool_response, recorded_at
+		SELECT id, session_id, tool_name, tool_input, error_message, recorded_at
 		FROM hooks
-		WHERE session_id = ? AND event_type = 'PostToolUse' AND tool_response != ''
+		WHERE session_id = ? AND error_message != '' AND error_message != ?
 		ORDER BY recorded_at DESC
-	`, sessionID)
+	`, sessionID, noErrorSentinel)
 	if err != nil {
 		return nil, err
 	}
@@ -1005,21 +1209,19 @@ func (s *Store) GetSessionErrors(sessionID string) ([]*ToolError, error) {
 
 	var out []*ToolError
 	for rows.Next() {
-		var id, sessID, toolName, toolInput, toolResponse string
+		var id, sessID, toolName, toolInput, errMsg string
 		var recordedAt time.Time
-		if err := rows.Scan(&id, &sessID, &toolName, &toolInput, &toolResponse, &recordedAt); err != nil {
+		if err := rows.Scan(&id, &sessID, &toolName, &toolInput, &errMsg, &recordedAt); err != nil {
 			return nil, err
 		}
-		if isErr, msg := isErrorResponse(toolResponse); isErr {
-			out = append(out, &ToolError{
-				HookID:       id,
-				SessionID:    sessID,
-				ToolName:     toolName,
-				ErrorMessage: msg,
-				Input:        toolInput,
-				RecordedAt:   recordedAt,
-			})
-		}
+		out = append(out, &ToolError{
+			HookID:       id,
+			SessionID:    sessID,
+			ToolName:     toolName,
+			ErrorMessage: errMsg,
+			Input:        toolInput,
+			RecordedAt:   recordedAt,
+		})
 	}
 	return out, rows.Err()
 }
@@ -1049,6 +1251,18 @@ func (s *Store) GetSessionDuration(sessionID string) (*float64, error) {
 	return &durSeconds.Float64, nil
 }
 
+// GetSessionLastEventType returns the event_type of the most recent hook for a session.
+func (s *Store) GetSessionLastEventType(sessionID string) (string, error) {
+	var eventType sql.NullString
+	err := s.db.QueryRow(`
+		SELECT event_type FROM hooks WHERE session_id = ? ORDER BY recorded_at DESC, id DESC LIMIT 1
+	`, sessionID).Scan(&eventType)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	return eventType.String, err
+}
+
 // ToolErrorRate holds error rate stats for a tool.
 type ToolErrorRate struct {
 	ToolName   string
@@ -1057,85 +1271,299 @@ type ToolErrorRate struct {
 }
 
 // GetToolErrorRates returns error rates per tool across all sessions.
+// Uses the precomputed error_message column for a single-query implementation.
 func (s *Store) GetToolErrorRates() ([]*ToolErrorRate, error) {
-	// Get all PostToolUse hooks grouped by tool
 	rows, err := s.db.Query(`
-		SELECT tool_name, COUNT(*) as total
+		SELECT
+			tool_name,
+			COUNT(*) as total,
+			SUM(CASE WHEN error_message != '' AND error_message != ? THEN 1 ELSE 0 END) as err_count
 		FROM hooks
 		WHERE event_type = 'PostToolUse' AND tool_name != ''
 		GROUP BY tool_name
 		ORDER BY total DESC
-	`)
+	`, noErrorSentinel)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	type toolTotal struct {
-		name  string
-		total int
-	}
-	var tools []toolTotal
-	for rows.Next() {
-		var t toolTotal
-		if err := rows.Scan(&t.name, &t.total); err != nil {
-			return nil, err
-		}
-		tools = append(tools, t)
-	}
-
-	// For each tool, count errors by scanning responses
 	var out []*ToolErrorRate
-	for _, t := range tools {
-		respRows, err := s.db.Query(`
-			SELECT tool_response FROM hooks
-			WHERE event_type = 'PostToolUse' AND tool_name = ? AND tool_response != ''
-		`, t.name)
-		if err != nil {
+	for rows.Next() {
+		var t ToolErrorRate
+		if err := rows.Scan(&t.ToolName, &t.TotalCalls, &t.ErrorCount); err != nil {
 			return nil, err
 		}
-		errCount := 0
-		for respRows.Next() {
-			var resp string
-			if err := respRows.Scan(&resp); err != nil {
-				respRows.Close()
-				return nil, err
-			}
-			if isErr, _ := isErrorResponse(resp); isErr {
-				errCount++
-			}
-		}
-		respRows.Close()
-		if errCount > 0 {
-			out = append(out, &ToolErrorRate{
-				ToolName:   t.name,
-				TotalCalls: t.total,
-				ErrorCount: errCount,
-			})
+		if t.ErrorCount > 0 {
+			out = append(out, &t)
 		}
 	}
-	return out, nil
+	return out, rows.Err()
+}
+
+// --- Batch fetch methods (used by request-scoped prefetch cache to avoid N+1) ---
+
+// inPlaceholders builds a "?,?,?" string for n parameters.
+func inPlaceholders(n int) string {
+	if n == 0 {
+		return ""
+	}
+	return strings.Repeat("?,", n)[:n*2-1]
+}
+
+// stringsToAny converts []string to []any for use as variadic query args.
+func stringsToAny(ids []string) []any {
+	args := make([]any, len(ids))
+	for i, id := range ids {
+		args[i] = id
+	}
+	return args
+}
+
+// BatchGetToolUsage returns tool usage stats for multiple sessions in one query.
+func (s *Store) BatchGetToolUsage(ids []string) (map[string][]*ToolStat, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	q := `SELECT session_id, tool_name, COUNT(*) cnt FROM hooks
+	      WHERE session_id IN (` + inPlaceholders(len(ids)) + `) AND tool_name != ''
+	      GROUP BY session_id, tool_name ORDER BY cnt DESC`
+	rows, err := s.db.Query(q, stringsToAny(ids)...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	result := make(map[string][]*ToolStat, len(ids))
+	for rows.Next() {
+		var sessID, toolName string
+		var cnt int
+		if err := rows.Scan(&sessID, &toolName, &cnt); err != nil {
+			return nil, err
+		}
+		result[sessID] = append(result[sessID], &ToolStat{Name: toolName, Count: cnt})
+	}
+	return result, rows.Err()
+}
+
+// BatchGetSkillsUsed returns skill usage stats for multiple sessions in one query.
+func (s *Store) BatchGetSkillsUsed(ids []string) (map[string][]*SkillUsage, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	q := `SELECT session_id, tool_input, COUNT(*) cnt FROM hooks
+	      WHERE tool_name = 'Skill' AND event_type = 'PreToolUse' AND session_id IN (` + inPlaceholders(len(ids)) + `)
+	      GROUP BY session_id, tool_input ORDER BY cnt DESC`
+	rows, err := s.db.Query(q, stringsToAny(ids)...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	result := make(map[string][]*SkillUsage, len(ids))
+	for rows.Next() {
+		var sessID, toolInput string
+		var cnt int
+		if err := rows.Scan(&sessID, &toolInput, &cnt); err != nil {
+			return nil, err
+		}
+		name := extractSkillName(toolInput)
+		if name != "" {
+			result[sessID] = append(result[sessID], &SkillUsage{Name: name, Count: cnt})
+		}
+	}
+	return result, rows.Err()
+}
+
+// BatchGetErrors returns detected errors for multiple sessions in one query.
+// Uses the precomputed error_message column to avoid scanning tool_response at query time.
+func (s *Store) BatchGetErrors(ids []string) (map[string][]*ToolError, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	q := `SELECT id, session_id, tool_name, tool_input, error_message, recorded_at
+	      FROM hooks
+	      WHERE session_id IN (` + inPlaceholders(len(ids)) + `) AND error_message != '' AND error_message != ?
+	      ORDER BY recorded_at DESC`
+	args := append(stringsToAny(ids), noErrorSentinel)
+	rows, err := s.db.Query(q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	result := make(map[string][]*ToolError, len(ids))
+	for rows.Next() {
+		var id, sessID, toolName, toolInput, errMsg string
+		var recordedAt time.Time
+		if err := rows.Scan(&id, &sessID, &toolName, &toolInput, &errMsg, &recordedAt); err != nil {
+			return nil, err
+		}
+		result[sessID] = append(result[sessID], &ToolError{
+			HookID:       id,
+			SessionID:    sessID,
+			ToolName:     toolName,
+			ErrorMessage: errMsg,
+			Input:        toolInput,
+			RecordedAt:   recordedAt,
+		})
+	}
+	return result, rows.Err()
+}
+
+// BatchGetDuration returns duration in seconds for multiple sessions in one query.
+func (s *Store) BatchGetDuration(ids []string) (map[string]*float64, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	q := `SELECT session_id,
+	             (julianday(SUBSTR(MAX(recorded_at), 1, 26)) - julianday(SUBSTR(MIN(recorded_at), 1, 26))) * 86400.0
+	      FROM hooks WHERE session_id IN (` + inPlaceholders(len(ids)) + `)
+	      GROUP BY session_id`
+	rows, err := s.db.Query(q, stringsToAny(ids)...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	result := make(map[string]*float64, len(ids))
+	for rows.Next() {
+		var sessID string
+		var dur sql.NullFloat64
+		if err := rows.Scan(&sessID, &dur); err != nil {
+			return nil, err
+		}
+		if dur.Valid && dur.Float64 > 0 {
+			v := dur.Float64
+			result[sessID] = &v
+		}
+	}
+	return result, rows.Err()
+}
+
+// BatchCountHooks returns hook counts for multiple sessions in one query.
+func (s *Store) BatchCountHooks(ids []string) (map[string]int, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	q := `SELECT session_id, COUNT(*) FROM hooks WHERE session_id IN (` + inPlaceholders(len(ids)) + `) GROUP BY session_id`
+	rows, err := s.db.Query(q, stringsToAny(ids)...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	result := make(map[string]int, len(ids))
+	for rows.Next() {
+		var sessID string
+		var cnt int
+		if err := rows.Scan(&sessID, &cnt); err != nil {
+			return nil, err
+		}
+		result[sessID] = cnt
+	}
+	return result, rows.Err()
 }
 
 // GetTotalErrors returns total error count across all sessions.
 func (s *Store) GetTotalErrors() (int, error) {
+	var count int
+	err := s.db.QueryRow(`
+		SELECT COUNT(*) FROM hooks
+		WHERE error_message != '' AND error_message != ?
+	`, noErrorSentinel).Scan(&count)
+	return count, err
+}
+
+// GetSessionPrompts returns user prompt strings for a session ordered by recorded_at.
+func (s *Store) GetSessionPrompts(sessionID string) ([]string, error) {
 	rows, err := s.db.Query(`
-		SELECT tool_response FROM hooks
-		WHERE event_type = 'PostToolUse' AND tool_response != ''
-	`)
+		SELECT prompt FROM hooks
+		WHERE session_id = ? AND event_type = 'UserPromptSubmit' AND prompt != ''
+		ORDER BY recorded_at ASC
+	`, sessionID)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 	defer rows.Close()
-	count := 0
+	var out []string
 	for rows.Next() {
-		var resp string
-		if err := rows.Scan(&resp); err != nil {
-			return 0, err
+		var p string
+		if err := rows.Scan(&p); err != nil {
+			return nil, err
 		}
-		if isErr, _ := isErrorResponse(resp); isErr {
-			count++
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+// GetSessionEditedFiles returns distinct file paths touched by Edit/Write hooks, ordered by first occurrence.
+func (s *Store) GetSessionEditedFiles(sessionID string) ([]string, error) {
+	rows, err := s.db.Query(`
+		SELECT tool_input FROM hooks
+		WHERE session_id = ? AND event_type = 'PreToolUse' AND tool_name IN ('Edit', 'Write')
+		ORDER BY recorded_at ASC
+	`, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	seen := map[string]bool{}
+	var out []string
+	for rows.Next() {
+		var raw string
+		if err := rows.Scan(&raw); err != nil {
+			return nil, err
+		}
+		var v struct {
+			FilePath string `json:"file_path"`
+		}
+		if err := json.Unmarshal([]byte(raw), &v); err != nil || v.FilePath == "" {
+			continue
+		}
+		if !seen[v.FilePath] {
+			seen[v.FilePath] = true
+			out = append(out, v.FilePath)
 		}
 	}
-	return count, rows.Err()
+	return out, rows.Err()
+}
+
+// TokenAggregate holds summed token counts across messages.
+type TokenAggregate struct {
+	InputTokens              int
+	OutputTokens             int
+	CacheReadInputTokens     int
+	CacheCreationInputTokens int
+}
+
+// GetTotalTokenUsage sums token usage across all assistant messages in transcript_messages.
+func (s *Store) GetTotalTokenUsage() (*TokenAggregate, error) {
+	rows, err := s.db.Query(`SELECT raw FROM transcript_messages WHERE role = 'assistant'`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	agg := &TokenAggregate{}
+	for rows.Next() {
+		var raw string
+		if err := rows.Scan(&raw); err != nil {
+			return nil, err
+		}
+		var m struct {
+			Message struct {
+				Usage struct {
+					InputTokens              int `json:"input_tokens"`
+					OutputTokens             int `json:"output_tokens"`
+					CacheReadInputTokens     int `json:"cache_read_input_tokens"`
+					CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
+				} `json:"usage"`
+			} `json:"message"`
+		}
+		if err := json.Unmarshal([]byte(raw), &m); err != nil {
+			continue
+		}
+		agg.InputTokens += m.Message.Usage.InputTokens
+		agg.OutputTokens += m.Message.Usage.OutputTokens
+		agg.CacheReadInputTokens += m.Message.Usage.CacheReadInputTokens
+		agg.CacheCreationInputTokens += m.Message.Usage.CacheCreationInputTokens
+	}
+	return agg, rows.Err()
 }

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { fetchSessionHistory } from '../api'
 
 function ago(ts) {
@@ -260,9 +260,8 @@ function SessionRow({ session, recentActivity, latestPrompt, latestStop }) {
 }
 
 export default function SessionList({ sessions, recentActivity, recentPrompts, recentStops }) {
-  const sorted = [...sessions].sort(
-    (a, b) => new Date(b.lastSeenAt) - new Date(a.lastSeenAt)
-  )
+  const [search, setSearch] = useState('')
+  const inputRef = useRef(null)
 
   // index latest prompt and stop per session
   const latestPromptBySession = {}
@@ -280,21 +279,79 @@ export default function SessionList({ sessions, recentActivity, recentPrompts, r
     }
   }
 
+  const q = search.trim().toLowerCase()
+  const filtered = sessions.filter(s => {
+    if (!q) return true
+    return (s.cwd ?? '').toLowerCase().includes(q) ||
+           (s.id ?? '').toLowerCase().includes(q) ||
+           (s.gitBranch ?? '').toLowerCase().includes(q)
+  })
+
+  const byTime = (a, b) => new Date(b.lastSeenAt) - new Date(a.lastSeenAt)
+  const active = filtered.filter(isActive).sort(byTime)
+  const inactive = filtered.filter(s => !isActive(s)).sort(byTime)
+
+  const renderRow = s => (
+    <SessionRow
+      key={s.id}
+      session={s}
+      recentActivity={recentActivity}
+      latestPrompt={latestPromptBySession[s.id]}
+      latestStop={latestStopBySession[s.id]}
+    />
+  )
+
   return (
     <div>
-      <div className="text-xs text-zinc-500 mb-3 flex items-center gap-2">
-        <span>sessions</span>
-        <span className="text-zinc-700">({sessions.length})</span>
+      {/* Header + search */}
+      <div className="flex items-center gap-3 mb-3">
+        <span className="text-xs text-zinc-500">sessions</span>
+        <span className="text-xs text-zinc-700">({filtered.length}{q ? `/${sessions.length}` : ''})</span>
+        <div className="flex-1 relative">
+          <input
+            ref={inputRef}
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            placeholder="filter by project, branch, id…"
+            className="w-full bg-zinc-900 border border-zinc-800 rounded px-2.5 py-1 text-xs text-zinc-300 placeholder-zinc-600 focus:outline-none focus:border-zinc-600"
+          />
+          {search && (
+            <button
+              onClick={() => setSearch('')}
+              className="absolute right-2 top-1/2 -translate-y-1/2 text-zinc-600 hover:text-zinc-400 text-xs"
+            >✕</button>
+          )}
+        </div>
       </div>
-      {sorted.map(s => (
-        <SessionRow
-          key={s.id}
-          session={s}
-          recentActivity={recentActivity}
-          latestPrompt={latestPromptBySession[s.id]}
-          latestStop={latestStopBySession[s.id]}
-        />
-      ))}
+
+      {/* Active sessions */}
+      {active.length > 0 && (
+        <>
+          <div className="flex items-center gap-2 mb-2">
+            <span className="w-2 h-2 rounded-full bg-green-400 animate-pulse inline-block flex-shrink-0" />
+            <span className="text-xs text-green-600 uppercase tracking-wider">active</span>
+            <div className="flex-1 h-px bg-green-900/40" />
+          </div>
+          {active.map(renderRow)}
+        </>
+      )}
+
+      {/* Inactive sessions */}
+      {inactive.length > 0 && (
+        <>
+          {active.length > 0 && (
+            <div className="flex items-center gap-2 mb-2 mt-3">
+              <span className="text-xs text-zinc-600 uppercase tracking-wider">recent</span>
+              <div className="flex-1 h-px bg-zinc-800" />
+            </div>
+          )}
+          {inactive.map(renderRow)}
+        </>
+      )}
+
+      {filtered.length === 0 && q && (
+        <div className="text-zinc-600 text-xs text-center py-8">no sessions match "{q}"</div>
+      )}
     </div>
   )
 }

@@ -1,6 +1,18 @@
 scalar Time
 
 """
+Lifecycle status of a session.
+ACTIVE  — hook received within the last 3 minutes and no terminal event seen.
+IDLE    — no recent hook activity and no terminal event.
+STOPPED — last hook was Stop, SubagentStop, or SessionEnd.
+"""
+enum SessionStatus {
+  ACTIVE
+  IDLE
+  STOPPED
+}
+
+"""
 The type of event that triggered a Claude Code hook.
 Covers all hook_event_name values Claude Code can emit.
 """
@@ -100,6 +112,8 @@ type Session {
   firstSeenAt: Time!
   """Timestamp of the most recent hook recorded for this session."""
   lastSeenAt: Time!
+  """Lifecycle status: ACTIVE (recent activity), IDLE (no recent hooks), or STOPPED (terminal event seen)."""
+  status: SessionStatus!
   """Total number of hooks recorded for this session."""
   hookCount: Int!
   """All hook events recorded for this session."""
@@ -126,6 +140,12 @@ type Session {
   transcript(limit: Int, offset: Int): [TranscriptMessage!]!
   """Subagents spawned during this session (e.g. Explore, Plan, general-purpose agents)."""
   subagents: [Subagent!]!
+  """User prompts submitted during this session, ordered by time."""
+  prompts: [String!]!
+  """Distinct files edited or written during this session, ordered by first occurrence."""
+  editedFiles: [String!]!
+  """Project this session belongs to, matched by cwd."""
+  project: Project
 }
 
 """
@@ -232,6 +252,8 @@ type Hook {
   lastAssistantMessage: String
   """Whether stop hook is active, parsed from raw input for Stop/SubagentStop events."""
   stopHookActive: Boolean
+  """Parent session for this hook."""
+  session: Session
 }
 
 type ToolStat {
@@ -301,6 +323,8 @@ type Stats {
   toolErrorRates: [ToolErrorRate!]!
   """Total errors across all sessions."""
   totalErrors: Int!
+  """Aggregate token usage across all ingested transcript messages."""
+  totalTokenUsage: TokenUsage
 }
 
 type PageInfo {
@@ -441,6 +465,8 @@ type TranscriptMessage {
   isSidechain: Boolean!
   """Complete raw JSON of this transcript entry, for fields not otherwise exposed."""
   raw: String!
+  """Token usage for this message. Only populated for assistant messages."""
+  tokenUsage: TokenUsage
 }
 
 type Query {

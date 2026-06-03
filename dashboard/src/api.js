@@ -13,7 +13,7 @@ async function gql(query, variables = {}) {
 
 export async function fetchDashboard() {
   return gql(`{
-    sessions(limit: 50) {
+    sessions(limit: 200) {
       id
       cwd
       model
@@ -28,6 +28,7 @@ export async function fetchDashboard() {
       skillsUsed { name count }
       subagents { id agentType description }
       tokenUsage { inputTokens outputTokens cacheReadTokens cacheCreationTokens }
+      errors { id toolName errorMessage recordedAt }
     }
     recentActivity: hooks(filter: {}, limit: 30) {
       id
@@ -51,6 +52,7 @@ export async function fetchDashboard() {
       lastAssistantMessage
       recordedAt
     }
+    userSkills { name description dirName }
     stats {
       totalSessions
       totalHooks
@@ -58,6 +60,7 @@ export async function fetchDashboard() {
       avgHooksPerSession
       topTools(limit: 8) { name count }
       hooksByDay(days: 7) { date count }
+      toolErrorRates { toolName errorCount totalCalls errorRate }
     }
   }`)
 }

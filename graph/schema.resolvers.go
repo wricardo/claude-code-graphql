@@ -169,6 +169,15 @@ func (r *hookResolver) StopHookActive(ctx context.Context, obj *Hook) (*bool, er
 	return v.StopHookActive, nil
 }
 
+// Session is the resolver for the session field.
+func (r *hookResolver) Session(ctx context.Context, obj *Hook) (*Session, error) {
+	sess, err := r.Store.GetSession(obj.SessionID)
+	if err != nil || sess == nil {
+		return nil, err
+	}
+	return storeSessionToGQL(sess), nil
+}
+
 // RecordHook is the resolver for the recordHook field.
 func (r *mutationResolver) RecordHook(ctx context.Context, input RecordHookInput) (*Hook, error) {
 	h, err := r.Store.RecordHook(store.RecordHookInput{
@@ -268,8 +277,14 @@ func (r *queryResolver) Sessions(ctx context.Context, limit *int, offset *int) (
 		return nil, err
 	}
 	out := make([]*Session, len(rows))
+	ids := make([]string, len(rows))
 	for i, s := range rows {
 		out[i] = storeSessionToGQL(s)
+		ids[i] = s.ID
+	}
+	// Prefetch all computed session fields in batch to avoid N+1 queries.
+	if cache := sessionCacheFromCtx(ctx); cache != nil && len(ids) > 0 {
+		cache.prefetch(r.Store, ids)
 	}
 	return out, nil
 }
@@ -439,15 +454,11 @@ func (r *queryResolver) UserSkills(ctx context.Context) ([]*Skill, error) {
 
 // Transcript is the resolver for the transcript field.
 func (r *queryResolver) Transcript(ctx context.Context, sessionID string, limit *int, offset *int) ([]*TranscriptMessage, error) {
-	encodedProject, found := claude.FindProjectForSession(r.ClaudeDir, sessionID)
-	if !found {
-		return nil, nil
-	}
-	msgs, err := claude.ReadTranscript(r.ClaudeDir, encodedProject, sessionID)
+	msgs, err := r.Store.GetTranscript(sessionID, derefInt(limit, 200), derefInt(offset, 0))
 	if err != nil {
 		return nil, err
 	}
-	return claudeMsgsToGQL(msgs, derefInt(limit, 100), derefInt(offset, 0)), nil
+	return storeMsgsToGQL(msgs), nil
 }
 
 // Search is the resolver for the search field.
@@ -472,8 +483,30 @@ func (r *queryResolver) Search(ctx context.Context, query string, sessionID *str
 	return out, nil
 }
 
+// Status is the resolver for the status field.
+func (r *sessionResolver) Status(ctx context.Context, obj *Session) (SessionStatus, error) {
+	const activeWindow = 3 * time.Minute
+	lastEventType, err := r.Store.GetSessionLastEventType(obj.ID)
+	if err != nil {
+		return SessionStatusIdle, err
+	}
+	switch lastEventType {
+	case "Stop", "SubagentStop", "SessionEnd":
+		return SessionStatusStopped, nil
+	}
+	if time.Since(obj.LastSeenAt) <= activeWindow {
+		return SessionStatusActive, nil
+	}
+	return SessionStatusIdle, nil
+}
+
 // HookCount is the field resolver for Session.hookCount.
 func (r *sessionResolver) HookCount(ctx context.Context, obj *Session) (int, error) {
+	if cache := sessionCacheFromCtx(ctx); cache != nil {
+		if v, ok := cache.getHookCount(obj.ID); ok {
+			return v, nil
+		}
+	}
 	return r.Store.CountSessionHooks(obj.ID)
 }
 
@@ -510,6 +543,15 @@ func (r *sessionResolver) Hooks(ctx context.Context, obj *Session, filter *Hooks
 
 // ToolUsage is the resolver for the toolUsage field.
 func (r *sessionResolver) ToolUsage(ctx context.Context, obj *Session) ([]*ToolStat, error) {
+	if cache := sessionCacheFromCtx(ctx); cache != nil {
+		if rows, ok := cache.getToolUsage(obj.ID); ok {
+			out := make([]*ToolStat, len(rows))
+			for i, t := range rows {
+				out[i] = &ToolStat{Name: t.Name, Count: t.Count}
+			}
+			return out, nil
+		}
+	}
 	rows, err := r.Store.GetToolUsageBySession(obj.ID)
 	if err != nil {
 		return nil, err
@@ -523,6 +565,15 @@ func (r *sessionResolver) ToolUsage(ctx context.Context, obj *Session) ([]*ToolS
 
 // SkillsUsed is the resolver for the skillsUsed field.
 func (r *sessionResolver) SkillsUsed(ctx context.Context, obj *Session) ([]*SkillUsage, error) {
+	if cache := sessionCacheFromCtx(ctx); cache != nil {
+		if rows, ok := cache.getSkillsUsed(obj.ID); ok {
+			out := make([]*SkillUsage, len(rows))
+			for i, su := range rows {
+				out[i] = &SkillUsage{Name: su.Name, Count: su.Count}
+			}
+			return out, nil
+		}
+	}
 	rows, err := r.Store.GetSkillsUsedBySession(obj.ID)
 	if err != nil {
 		return nil, err
@@ -548,14 +599,28 @@ func (r *sessionResolver) Summary(ctx context.Context, obj *Session) (*string, e
 
 // ErrorCount is the resolver for the errorCount field.
 func (r *sessionResolver) ErrorCount(ctx context.Context, obj *Session) (int, error) {
+	if cache := sessionCacheFromCtx(ctx); cache != nil {
+		if errs, ok := cache.getErrors(obj.ID); ok {
+			return len(errs), nil
+		}
+	}
 	return r.Store.GetSessionErrorCount(obj.ID)
 }
 
 // Errors is the resolver for the errors field.
 func (r *sessionResolver) Errors(ctx context.Context, obj *Session) ([]*ToolError, error) {
-	errs, err := r.Store.GetSessionErrors(obj.ID)
-	if err != nil {
-		return nil, err
+	var errs []*store.ToolError
+	if cache := sessionCacheFromCtx(ctx); cache != nil {
+		if cached, ok := cache.getErrors(obj.ID); ok {
+			errs = cached
+		}
+	}
+	if errs == nil {
+		var err error
+		errs, err = r.Store.GetSessionErrors(obj.ID)
+		if err != nil {
+			return nil, err
+		}
 	}
 	out := make([]*ToolError, len(errs))
 	for i, e := range errs {
@@ -574,6 +639,11 @@ func (r *sessionResolver) Errors(ctx context.Context, obj *Session) ([]*ToolErro
 
 // DurationSeconds is the resolver for the durationSeconds field.
 func (r *sessionResolver) DurationSeconds(ctx context.Context, obj *Session) (*float64, error) {
+	if cache := sessionCacheFromCtx(ctx); cache != nil {
+		if v, ok := cache.getDuration(obj.ID); ok {
+			return v, nil
+		}
+	}
 	return r.Store.GetSessionDuration(obj.ID)
 }
 
@@ -635,11 +705,11 @@ func (r *sessionResolver) TokenUsage(ctx context.Context, obj *Session) (*TokenU
 
 // Transcript is the resolver for the transcript field on Session.
 func (r *sessionResolver) Transcript(ctx context.Context, obj *Session, limit *int, offset *int) ([]*TranscriptMessage, error) {
-	msgs, err := r.loadSessionTranscript(obj.ID)
+	msgs, err := r.Store.GetTranscript(obj.ID, derefInt(limit, 200), derefInt(offset, 0))
 	if err != nil {
 		return nil, err
 	}
-	return claudeMsgsToGQL(msgs, derefInt(limit, 100), derefInt(offset, 0)), nil
+	return storeMsgsToGQL(msgs), nil
 }
 
 // Subagents is the resolver for the subagents field.
@@ -664,6 +734,42 @@ func (r *sessionResolver) Subagents(ctx context.Context, obj *Session) ([]*Subag
 		out[i].ID = s.ID + "|" + s.TranscriptPath
 	}
 	return out, nil
+}
+
+// Prompts is the resolver for the prompts field.
+func (r *sessionResolver) Prompts(ctx context.Context, obj *Session) ([]string, error) {
+	prompts, err := r.Store.GetSessionPrompts(obj.ID)
+	if err != nil {
+		return nil, err
+	}
+	if prompts == nil {
+		return []string{}, nil
+	}
+	return prompts, nil
+}
+
+// EditedFiles is the resolver for the editedFiles field.
+func (r *sessionResolver) EditedFiles(ctx context.Context, obj *Session) ([]string, error) {
+	files, err := r.Store.GetSessionEditedFiles(obj.ID)
+	if err != nil {
+		return nil, err
+	}
+	if files == nil {
+		return []string{}, nil
+	}
+	return files, nil
+}
+
+// Project is the resolver for the project field.
+func (r *sessionResolver) Project(ctx context.Context, obj *Session) (*Project, error) {
+	if obj.Cwd == nil || *obj.Cwd == "" {
+		return nil, nil
+	}
+	p, err := claude.FindProjectByPath(r.ClaudeDir, *obj.Cwd)
+	if err != nil || p == nil {
+		return nil, err
+	}
+	return &Project{EncodedName: p.EncodedName, Path: p.Path}, nil
 }
 
 // TopTools is the resolver for the topTools field.
@@ -730,6 +836,20 @@ func (r *statsResolver) ToolErrorRates(ctx context.Context, obj *Stats) ([]*Tool
 // TotalErrors is the resolver for the totalErrors field.
 func (r *statsResolver) TotalErrors(ctx context.Context, obj *Stats) (int, error) {
 	return r.Store.GetTotalErrors()
+}
+
+// TotalTokenUsage is the resolver for the totalTokenUsage field.
+func (r *statsResolver) TotalTokenUsage(ctx context.Context, obj *Stats) (*TokenUsage, error) {
+	agg, err := r.Store.GetTotalTokenUsage()
+	if err != nil {
+		return nil, err
+	}
+	return &TokenUsage{
+		InputTokens:         agg.InputTokens,
+		OutputTokens:        agg.OutputTokens,
+		CacheReadTokens:     agg.CacheReadInputTokens,
+		CacheCreationTokens: agg.CacheCreationInputTokens,
+	}, nil
 }
 
 // Transcript is the resolver for the transcript field on Subagent.
@@ -827,6 +947,36 @@ func (r *transcriptMessageResolver) ContentBlocks(ctx context.Context, obj *Tran
 	return out, nil
 }
 
+// TokenUsage is the resolver for the tokenUsage field.
+func (r *transcriptMessageResolver) TokenUsage(ctx context.Context, obj *TranscriptMessage) (*TokenUsage, error) {
+	if obj.Raw == "" {
+		return nil, nil
+	}
+	var m struct {
+		Message struct {
+			Usage struct {
+				InputTokens              int `json:"input_tokens"`
+				OutputTokens             int `json:"output_tokens"`
+				CacheReadInputTokens     int `json:"cache_read_input_tokens"`
+				CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
+			} `json:"usage"`
+		} `json:"message"`
+	}
+	if err := json.Unmarshal([]byte(obj.Raw), &m); err != nil {
+		return nil, nil
+	}
+	u := m.Message.Usage
+	if u.InputTokens == 0 && u.OutputTokens == 0 {
+		return nil, nil
+	}
+	return &TokenUsage{
+		InputTokens:         u.InputTokens,
+		OutputTokens:        u.OutputTokens,
+		CacheReadTokens:     u.CacheReadInputTokens,
+		CacheCreationTokens: u.CacheCreationInputTokens,
+	}, nil
+}
+
 // Hook returns HookResolver implementation.
 func (r *Resolver) Hook() HookResolver { return &hookResolver{r} }
 
@@ -861,4 +1011,3 @@ type sessionResolver struct{ *Resolver }
 type statsResolver struct{ *Resolver }
 type subagentResolver struct{ *Resolver }
 type transcriptMessageResolver struct{ *Resolver }
-
